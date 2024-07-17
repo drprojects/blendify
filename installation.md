@@ -11,4 +11,8 @@ conda activate blendify
 pip install bpy==3.5.0
 pip install blendify
 pip install torch
+pip install blender_plots
+pip install trimesh
+pip install videoio
+pip install matplotlib
 ```

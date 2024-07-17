@@ -118,7 +118,10 @@ def main(args):
         # 'y_colors',
         # 'pred_colors',
         # 'obj_colors',
-        'obj_pred_colors']:
+        # 'obj_pred_colors',
+        # "1_level_colors",
+        "2_level_colors",
+        ]:
         scatter = bplt.Scatter(
             pos.numpy(),
             color=adjust_color(np.asarray(data[colorname]).astype('float32') / 255.),

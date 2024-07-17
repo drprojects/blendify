@@ -5,4 +5,4 @@
 build/
 dist/
 blendify.egg-info/
-
+data/
