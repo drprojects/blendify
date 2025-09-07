@@ -82,6 +82,10 @@ def main(args):
         translation = np.array([-14.493873596191406, -15.842079162597656, 8.457014083862305], dtype=np.float32)
         quaternion = np.array([0.7844890356063843, 0.5345035195350647, -0.17706048488616943, -0.25987112522125244], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_ezsp_s3dis':
+        translation = np.array([-0.1313309222459793, -7.50628137588501, 3.815814971923828], dtype=np.float32)
+        quaternion = np.array([0.8719961047172546, 0.4894148111343384, -0.00020381153444759548, -0.009800762869417667], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -102,6 +106,9 @@ def main(args):
         bpy.context.object.data.energy = 3.5
         bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
         bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
+    elif args.mode == 'paper_ezsp_s3dis':
+        bpy.context.object.data.energy = 2
+        bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -115,6 +122,8 @@ def main(args):
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode == 'paper_ezsp_kitti360':
         bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode == 'paper_ezsp_s3dis':
+        bg.inputs[1].default_value = 0.5  # strength
 
     # # Camera colored PointCloud
     # # source of the mesh https://graphics.stanford.edu/data/3Dscanrep/
