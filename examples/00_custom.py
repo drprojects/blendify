@@ -107,7 +107,7 @@ def main(args):
         bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
         bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
     elif args.mode == 'paper_ezsp_s3dis':
-        bpy.context.object.data.energy = 2
+        bpy.context.object.data.energy = 2.2
         bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
 
     # Configure world lighting
@@ -123,7 +123,7 @@ def main(args):
     elif args.mode == 'paper_ezsp_kitti360':
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode == 'paper_ezsp_s3dis':
-        bg.inputs[1].default_value = 0.5  # strength
+        bg.inputs[1].default_value = 0.7  # strength
 
     # # Camera colored PointCloud
     # # source of the mesh https://graphics.stanford.edu/data/3Dscanrep/
@@ -175,7 +175,7 @@ def main(args):
 
             # Remove or hide scatter before next iteration
             scatter.base_object.hide_render = True
-            bpy.data.objects.remove(scatter.base_object, do_unlink=True)
+            # bpy.data.objects.remove(scatter.base_object, do_unlink=True)
 
     # # create material
     # poincloud_material = PrincipledBSDFMaterial(specular=0.25, roughness=0.2)
