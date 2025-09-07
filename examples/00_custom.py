@@ -154,6 +154,11 @@ def main(args):
     point_size = args.voxel
 
     for colorname in [k for k in data.keys() if 'color' in k]:
+        # Convert 'rgb(r, g, b)' string colors to int
+        if data[colorname].dtype == np.dtype('<U18'):
+            data[colorname] = np.array([
+                [int(c) for c in rgb.replace('rgb(', '').replace(')', '').split(', ')]
+                for rgb in data[colorname]])
         # Create Scatter for this layer
         scatter = bplt.Scatter(
             pos.numpy(),
