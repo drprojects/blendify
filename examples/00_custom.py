@@ -75,9 +75,12 @@ def main(args):
     # Add camera to the scene (position will be set in the rendering loop)
     camera = scene.set_perspective_camera(resolution=args.resolution, fov_x=np.deg2rad(73))
     if args.mode == 'paper_ezsp_dales':
-        # /home/damien/projects/superpixel_transformer_dev/notebooks/blender_ezsp/dales/pcp/5175_54395_new__TILE_3-3_OF_3-3.h5
         translation =  np.array([43.99616622924805, 17.057422637939453, 29.741680145263672], dtype=np.float32)
         quaternion = np.array([0.49730759859085083, 0.24891497194766998, 0.3719913959503174, 0.7432017922401428], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_ezsp_kitti360':
+        translation = np.array([-14.493873596191406, -15.842079162597656, 8.457014083862305], dtype=np.float32)
+        quaternion = np.array([0.7844890356063843, 0.5345035195350647, -0.17706048488616943, -0.25987112522125244], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
 
     # Set it as the active camera
@@ -90,11 +93,15 @@ def main(args):
 
     # Configure the sun
     bpy.ops.object.light_add(type="SUN", radius=1, align="WORLD", location=[0, 0, 5], rotation=[1, 0, 2], scale=[1, 1, 1])
-    bpy.context.object.data.color = (1, 0.581614, 0.316125)  # sunset-ish color
     bpy.context.object.data.energy = 1
     if args.mode == 'paper_ezsp_dales':
         bpy.context.object.data.energy = 5
-        bpy.context.object.rotation_euler = np.array([-1.0471975803375244, 0.0, 0.1745329201221466],dtype=np.float32)  # sunset-ish orientation
+        bpy.context.object.data.color = (1, 0.581614, 0.316125)  # sunset-ish color
+        bpy.context.object.rotation_euler = np.array([-1.0471975803375244, 0.0, 0.1745329201221466],dtype=np.float32)
+    elif args.mode == 'paper_ezsp_kitti360':
+        bpy.context.object.data.energy = 3.5
+        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
+        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -105,6 +112,8 @@ def main(args):
     bg.inputs[0].default_value = (1, 0.934681, 0.78918, 1)  # color
     bg.inputs[1].default_value = 1.3  # strength
     if args.mode == 'paper_ezsp_dales':
+        bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode == 'paper_ezsp_kitti360':
         bg.inputs[1].default_value = 0.7  # strength
 
     # # Camera colored PointCloud
