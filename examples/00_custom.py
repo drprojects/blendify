@@ -86,6 +86,10 @@ def main(args):
         translation = np.array([-0.1313309222459793, -7.50628137588501, 3.815814971923828], dtype=np.float32)
         quaternion = np.array([0.8719961047172546, 0.4894148111343384, -0.00020381153444759548, -0.009800762869417667], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_ezsp_s3dis_2':
+        translation = np.array([-0.12195667624473572, -6.851565361022949, 5.126280784606934], dtype=np.float32)
+        quaternion = np.array([0.9126590490341187, 0.40860432386398315, 0.0006827776087448001, -0.009779075160622597], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -109,6 +113,9 @@ def main(args):
     elif args.mode == 'paper_ezsp_s3dis':
         bpy.context.object.data.energy = 2.2
         bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
+    elif args.mode == 'paper_ezsp_s3dis_2':
+        bpy.context.object.data.energy = 2.2
+        bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -123,6 +130,8 @@ def main(args):
     elif args.mode == 'paper_ezsp_kitti360':
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode == 'paper_ezsp_s3dis':
+        bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode == 'paper_ezsp_s3dis_2':
         bg.inputs[1].default_value = 0.7  # strength
 
     # # Camera colored PointCloud
@@ -171,6 +180,8 @@ def main(args):
 
         if args.mode == 'paper_ezsp_dales':
             scatter.base_object.rotation_euler = np.array([0.0, -0.0, -2.099583387374878], dtype=np.float32)
+        elif args.mode == 'paper_ezsp_s3dis_2':
+            scatter.base_object.rotation_euler = np.array([0.0, -0.0, -0.4942256808280945], dtype=np.float32)
 
         # Render image and save to disk
         bpy.context.scene.render.filepath = f"{path_image}_{colorname}.png"
