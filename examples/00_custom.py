@@ -602,22 +602,24 @@ def main(args):
         if args.mode == 'paper_ezsp_dales':
             start_position = np.array([0, 0, 8], dtype=np.float32)
             start_target = np.array([1, 0, 8], dtype=np.float32)
+            spiral_target = np.array([0, 0, 0], dtype=np.float32)
             z_max = 200
             r_max = 200
             color_keys = ['intensity', '0_level', 'pred']
         elif args.mode == 'paper_ezsp_kitti360':
             start_position = None
             start_target = None
+            spiral_target = None
             z_max = None
             r_max = None
             color_keys = ['rgb', '0_level', 'pred']
         elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
             start_position = np.array([0, 3, 1.7], dtype=np.float32)
             start_target = np.array([5, 0, 1.4], dtype=np.float32)
+            spiral_target = start_position
             z_max = 50
             r_max = 50
             color_keys = ['rgb', '0_level', 'pred']
-        spiral_target = start_position
         start_quaternion = look_at_quaternion(start_position, start_target)
         spin_duration = args.duration / 2
         spiral_duration = args.duration - spin_duration
