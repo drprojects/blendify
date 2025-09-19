@@ -599,8 +599,24 @@ def main(args):
 
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
-        start_position = np.array([0, 3, 1.7], dtype=np.float32)
-        start_target = np.array([5, 0, 1.4], dtype=np.float32)
+        if args.mode == 'paper_ezsp_dales':
+            start_position = np.array([0, 0, 8], dtype=np.float32)
+            start_target = np.array([1, 0, 8], dtype=np.float32)
+            z_max = 200
+            r_max = 200
+            color_keys = ['intensity', '0_level', 'pred']
+        elif args.mode == 'paper_ezsp_kitti360':
+            start_position = None
+            start_target = None
+            z_max = None
+            r_max = None
+            color_keys = ['rgb', '0_level', 'pred']
+        elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
+            start_position = np.array([0, 3, 1.7], dtype=np.float32)
+            start_target = np.array([5, 0, 1.4], dtype=np.float32)
+            z_max = 50
+            r_max = 50
+            color_keys = ['rgb', '0_level', 'pred']
         spiral_target = start_position
         start_quaternion = look_at_quaternion(start_position, start_target)
         spin_duration = args.duration / 2
@@ -618,8 +634,8 @@ def main(args):
             fps=args.fps,
             duration=spiral_duration,
             angular_speed=3 * np.pi / spiral_duration,
-            z_speed=50 / spiral_duration,
-            radius_growth=50 / spiral_duration,
+            z_speed=z_max / spiral_duration,
+            radius_growth=r_max / spiral_duration,
             z_curve=None,
             radius_curve=None)
         poses = concat_pose_dicts(spin_poses, spiral_poses)
@@ -635,16 +651,8 @@ def main(args):
 
         # Create a color interpolator
         color_interpolator = ColorInterpolator(
-            [
-                data['rgb_colors'] if 'rgb_colors' in data.keys() else data['intensity_colors'],
-                data['0_level_colors'],
-                data['pred_colors']
-            ],
-            [
-                0,
-                spin_duration / 2,
-                3 * spin_duration / 2
-            ],
+            [data[f'{k}_colors'] for k in color_keys],
+            [0, spin_duration / 2, 3 * spin_duration / 2],
             fade_duration=1)
 
         logger.info("Entering the main drawing loop")
