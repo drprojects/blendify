@@ -15,4 +15,5 @@ pip install blender_plots
 pip install trimesh
 pip install videoio
 pip install matplotlib
+pip install mathutils
 ```

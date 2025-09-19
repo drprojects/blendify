@@ -13,6 +13,7 @@ import torch
 import trimesh
 from videoio import VideoWriter
 import matplotlib.colors as colors
+import subprocess
 
 from blendify import scene
 from blendify.colors import UniformColors, VertexColors
@@ -32,6 +33,203 @@ def adjust_color(color, scale_red=1, scale_saturation=1):
     return color
 
 
+class ColorInterpolator:
+    def __init__(self, colors, times, fade_duration=1):
+        """
+        Args:
+            colors: list of 2D numpy arrays (H, W, 3) or (H, W, 4).
+            times: list of times (must be strictly increasing).
+            fade_duration: duration of fade into each new color.
+        """
+        assert len(colors) == len(times), "colors and times must have same length"
+        self.colors = colors
+        self.times = np.array(times, dtype=float)
+        self.fade_duration = float(fade_duration)
+
+    def get_color(self, t):
+        """
+        Compute the color array at time t.
+        Fades occur in intervals [t_i - fade_duration, t_i].
+        """
+        # Before first fade → return first color
+        if t <= self.times[0] - self.fade_duration:
+            return self.colors[0]
+
+        # After last color time → return last color
+        if t >= self.times[-1]:
+            return self.colors[-1]
+
+        # Find the active target index
+        idx = np.searchsorted(self.times, t)
+        if idx == 0:
+            return self.colors[0]
+
+        t_target = self.times[idx]        # time when color idx is fully active
+        t_fade_start = t_target - self.fade_duration
+
+        if t < t_fade_start:
+            # Still in hold period of previous color
+            return self.colors[idx - 1]
+
+        # Blend from previous color → current target color
+        alpha = (t - t_fade_start) / self.fade_duration
+        alpha = np.clip(alpha, 0.0, 1.0)
+        return (1 - alpha) * self.colors[idx - 1] + alpha * self.colors[idx]
+
+
+def rotmat_to_quat(R: np.ndarray) -> np.ndarray:
+    """Convert 3x3 rotation matrix to quaternion [w, x, y, z].
+    Right-handed, unit quaternion.
+    """
+    m00, m01, m02 = R[0, 0], R[0, 1], R[0, 2]
+    m10, m11, m12 = R[1, 0], R[1, 1], R[1, 2]
+    m20, m21, m22 = R[2, 0], R[2, 1], R[2, 2]
+
+    trace = m00 + m11 + m22
+    if trace > 0:
+        s = 0.5 / np.sqrt(trace + 1.0)
+        w = 0.25 / s
+        x = (m21 - m12) * s
+        y = (m02 - m20) * s
+        z = (m10 - m01) * s
+    elif (m00 > m11) and (m00 > m22):
+        s = 2.0 * np.sqrt(1.0 + m00 - m11 - m22)
+        w = (m21 - m12) / s
+        x = 0.25 * s
+        y = (m01 + m10) / s
+        z = (m02 + m20) / s
+    elif m11 > m22:
+        s = 2.0 * np.sqrt(1.0 + m11 - m00 - m22)
+        w = (m02 - m20) / s
+        x = (m01 + m10) / s
+        y = 0.25 * s
+        z = (m12 + m21) / s
+    else:
+        s = 2.0 * np.sqrt(1.0 + m22 - m00 - m11)
+        w = (m10 - m01) / s
+        x = (m02 + m20) / s
+        y = (m12 + m21) / s
+        z = 0.25 * s
+
+    quat = np.array([w, x, y, z], dtype=np.float64)
+    return quat / np.linalg.norm(quat)
+
+
+def look_at_quaternion(camera_location, target, up=(0, 0, 1)):
+    """Compute quaternion (np.array [w, x, y, z]) for camera looking at
+    target.
+    """
+    cam = np.array(camera_location, dtype=np.float64)
+    tgt = np.array(target, dtype=np.float64)
+    up = np.array(up, dtype=np.float64)
+
+    forward = tgt - cam
+    forward = forward / np.linalg.norm(forward)
+
+    right = np.cross(forward, up)
+    right = right / np.linalg.norm(right)
+
+    up = np.cross(right, forward)
+    up = up / np.linalg.norm(up)
+
+    R = np.stack([right, up, -forward], axis=1)  # 3x3
+    return rotmat_to_quat(R)
+
+
+def time_steps(fps, duration):
+    """
+    Generate an array of time steps starting at 0.
+
+    Args:
+        fps (float): frames per second
+        duration (float): total duration in seconds
+
+    Returns:
+        np.ndarray of shape (n_frames,), where each element is the timestamp in seconds
+    """
+    n_frames = int(np.floor(fps * duration))
+    return np.arange(n_frames) / fps
+
+
+def spiral_camera_trajectory(
+        start_translation,
+        start_quaternion,
+        target,
+        fps=20,
+        duration=10,
+        angular_speed=0.1,
+        z_speed=0.05,
+        radius_growth=0.01):
+    """Generate a spiral trajectory around a target.
+
+    Args:
+        start_translation: (3,) array-like
+        start_quaternion: (4,) array-like [w, x, y, z]
+        target: (3,) array-like
+        fps: int
+        duration: floar
+        angular_speed: float, radians per frame
+        z_speed: float
+        radius_growth: float
+
+    Returns:
+        dict: {frame_index: (translation (3,), quaternion (4,))}
+    """
+    start_loc = np.array(start_translation, dtype=np.float64)
+    start_quat = np.array(start_quaternion, dtype=np.float64)
+    start_quat /= np.linalg.norm(start_quat)
+    target = np.array(target, dtype=np.float64)
+
+    r0 = np.linalg.norm(start_loc[:2] - target[:2])
+    z0 = start_loc[2]
+
+    trajectory = {}
+
+    for t in time_steps(fps, duration):
+        if t == 0:
+            loc = start_loc
+            quat = start_quat
+        else:
+            theta = angular_speed * t
+            r = r0 + radius_growth * t
+            x = target[0] + r * np.cos(theta)
+            y = target[1] + r * np.sin(theta)
+            z = z0 + z_speed * t
+            loc = np.array([x, y, z], dtype=np.float64)
+            quat = look_at_quaternion(loc, target)
+
+        trajectory[t] = (loc, quat)
+
+    return trajectory
+
+
+def compress_mp4(
+        input_path,
+        output_path,
+        crf=28,
+        preset="slow",
+        codec="libx264"):
+    """
+    Compress an MP4 file using ffmpeg.
+    Args:
+        input_path (str): Path to input mp4
+        output_path (str): Path to compressed mp4
+        crf (int): Constant Rate Factor (lower=better quality, bigger file). Typical 18–28.
+        preset (str): ffmpeg preset ("ultrafast","superfast","veryfast","faster",
+                      "fast","medium","slow","slower","veryslow")
+        codec (str): "libx264" (H.264) or "libx265" (H.265, better compression but less supported)
+    """
+    cmd = [
+        "ffmpeg", "-i", input_path,
+        "-vcodec", codec,
+        "-crf", str(crf),
+        "-preset", preset,
+        "-acodec", "copy",
+        output_path
+    ]
+    subprocess.run(cmd, check=True)
+
+
 def main(args):
     # Configure logging
     logging.basicConfig(level=logging.INFO)
@@ -41,18 +239,38 @@ def main(args):
     # logger.info("Attaching blend to the scene")
     # scene.attach_blend("./assets/light_box.blend")
 
-    # Set custom parameters to improve quality of rendering
-    bpy.context.scene.cycles.max_bounces = 30
-    bpy.context.scene.cycles.transmission_bounces = 20
-    bpy.context.scene.cycles.transparent_max_bounces = 15
-    bpy.context.scene.cycles.diffuse_bounces = 10
-    bpy.context.scene.view_settings.view_transform = 'Standard'  # could also be Filmic
+    # Set the renderer
+    bpy.context.scene.render.engine = args.engine
+    if args.engine == 'BLENDER_EEVEE':
+        bpy.context.scene.eevee.taa_render_samples = args.n_samples  # Temporal Anti-Aliasing
+        bpy.context.scene.eevee.taa_samples = 8  # default 8, higher = smoother motion
+        bpy.context.scene.eevee.use_ssr = True  # enable screen space reflections
+        bpy.context.scene.eevee.use_ssr_refraction = True  # if you have transparent/refractive materials
+        bpy.context.scene.eevee.use_soft_shadows = True  # softer shadows
+        bpy.context.scene.eevee.shadow_cube_size = '1024'  # shadow resolution
+        bpy.context.scene.eevee.shadow_cascade_size = '1024'
+        bpy.context.scene.eevee.use_volumetric_lights = False  # optional, faster
+        bpy.context.scene.eevee.use_motion_blur = False  # optional, prevents extra flicker
+    elif args.engine == 'CYCLES':
+        bpy.context.scene.cycles.max_bounces = 30
+        bpy.context.scene.cycles.transmission_bounces = 20
+        bpy.context.scene.cycles.transparent_max_bounces = 15
+        bpy.context.scene.cycles.diffuse_bounces = 10
+        bpy.context.scene.cycles.device = 'GPU'
+        bpy.context.scene.cycles.samples = args.n_samples
+
+    # Resolution
     bpy.context.scene.render.resolution_x = args.resolution[0]
     bpy.context.scene.render.resolution_y = args.resolution[1]
-    bpy.context.scene.cycles.device = 'GPU'
-    bpy.context.scene.cycles.samples = args.n_samples
+
+    # Color management
+    bpy.context.scene.view_settings.view_transform = 'Standard'  # or 'Filmic'
+
+    # Output format
     bpy.context.scene.render.image_settings.file_format = 'PNG'
     bpy.context.scene.render.image_settings.color_mode = 'RGBA'
+
+    # Transparent background
     bpy.context.scene.render.film_transparent = True
 
     # # Interpolation of the camera trajectory
@@ -158,40 +376,170 @@ def main(args):
     # pos[:, :2] -= pos[:, :2].mean(dim=0).view(1, -1)
     pos[:, :2] -= (pos[:, :2].max(dim=0).values + pos[:, :2].min(dim=0).values).view(1, -1) / 2
     pos[:, 2] -= pos[:, 2].min()
-    specularity = 0.1
-    roughness = 0.2
     point_size = args.voxel
 
+    # Prepare the RGB colors to numpy arrays of float32 in [0, 1]
     for colorname in [k for k in data.keys() if 'color' in k]:
-        # Convert 'rgb(r, g, b)' string colors to int
         if data[colorname].dtype == np.dtype('<U18'):
             data[colorname] = np.array([
                 [int(c) for c in rgb.replace('rgb(', '').replace(')', '').split(', ')]
                 for rgb in data[colorname]])
-        # Create Scatter for this layer
-        scatter = bplt.Scatter(
-            pos.numpy(),
-            color=adjust_color(np.asarray(data[colorname]).astype('float32') / 255.),
-            marker_type="spheres",
-            name=f"point_cloud_{colorname}",
-            radius=point_size)
-        scatter.color_material.node_tree.nodes["Principled BSDF"].inputs[7].default_value = specularity
-        scatter.color_material.node_tree.nodes["Principled BSDF"].inputs[9].default_value = roughness
+        data[colorname] = np.asarray(data[colorname]).astype('float32') / 255.
+        data[colorname] = adjust_color(data[colorname])
 
-        if args.mode == 'paper_ezsp_dales':
-            scatter.base_object.rotation_euler = np.array([0.0, -0.0, -2.099583387374878], dtype=np.float32)
-        elif args.mode == 'paper_ezsp_s3dis_2':
-            scatter.base_object.rotation_euler = np.array([0.0, -0.0, -0.4942256808280945], dtype=np.float32)
+    # Create the Scatter object holding the point cloud
+    default_colorname = f"{args.default_color}_colors"
+    scatter = bplt.Scatter(
+        pos.numpy(),
+        color=data[default_colorname],
+        marker_type="spheres",
+        name=f"point_cloud_{default_colorname}",
+        radius=point_size)
+    scatter.color_material.node_tree.nodes["Principled BSDF"].inputs[7].default_value = args.specularity
+    scatter.color_material.node_tree.nodes["Principled BSDF"].inputs[9].default_value = args.roughness
+    if args.mode == 'paper_ezsp_dales':
+        scatter.base_object.rotation_euler = np.array([0.0, -0.0, -2.099583387374878], dtype=np.float32)
+    elif args.mode == 'paper_ezsp_s3dis_2':
+        scatter.base_object.rotation_euler = np.array([0.0, -0.0, -0.4942256808280945], dtype=np.float32)
 
-        # Render image and save to disk
-        bpy.context.scene.render.filepath = f"{path_image}_{colorname}.png"
-        if args.images:
+    # # Make adjustments in case we use the Eevee engine, mostly to
+    # # avoid light saturation
+    # if args.engine == "BLENDER_EEVEE":
+    #     bpy.context.scene.view_settings.view_transform = 'Filmic'
+    #     bpy.context.scene.view_settings.look = 'Medium High Contrast'  # optional
+    #     bpy.context.scene.render.film_transparent = False
+    #     for light in bpy.data.lights:
+    #         light.energy *= 0.1
+    #     bg.inputs[1].default_value *= 0.1
+    #     for mat in bpy.data.materials:
+    #         if not mat.node_tree:
+    #             continue
+    #         for node in mat.node_tree.nodes:
+    #             if node.type != 'BSDF_PRINCIPLED':
+    #                 continue
+    #             node.inputs['Roughness'].default_value = max(node.inputs['Roughness'].default_value, 0.6)
+    #             node.inputs['Specular'].default_value = min(node.inputs['Specular'].default_value, 0.5)
+
+    # Render image and save to disk
+    if args.image:
+        for colorname in [k for k in data.keys() if 'color' in k]:
             print(f"Rendering {colorname}...")
+            bpy.context.scene.render.filepath = f"{path_image}_{colorname}.png"
+            scatter.color = data[colorname]
             bpy.ops.render.render(write_still=True)
-
-            # Remove or hide scatter before next iteration
-            scatter.base_object.hide_render = True
+            # scatter.base_object.hide_render = True
             # bpy.data.objects.remove(scatter.base_object, do_unlink=True)
+            logger.info(f"Renedering of {colorname} complete")
+
+    if args.video:
+        # # Interpolation of the camera trajectory
+        # # Start, middle and end points of the camera trajectory
+        # left_translation, left_rotation = \
+        #     np.array([-0.5, -6.5, 2.4], dtype=np.float32), np.array([0.866, 0.5, 0.0, 0.0], dtype=np.float32)
+        # middle_translation, middle_rotation = \
+        #     np.array([4, -6.5, 2.4], dtype=np.float32), np.array([0.793, 0.505, 0.184, 0.288], dtype=np.float32)
+        # right_translation, right_rotation = \
+        #     np.array([6.5, -0.7, 2.4], dtype=np.float32), np.array([0.612, 0.354, 0.354, 0.612], dtype=np.float32)
+        # # Interpolate camera trajectory
+        # logger.info("Creating camera and interpolating its trajectory")
+        # camera_trajectory = Trajectory()
+        # camera_trajectory.add_keypoint(quaternion=left_rotation, position=left_translation, time=0)
+        # camera_trajectory.add_keypoint(quaternion=middle_rotation, position=middle_translation, time=2.5)
+        # camera_trajectory.add_keypoint(quaternion=right_rotation, position=right_translation, time=5)
+        # camera_trajectory = camera_trajectory.refine_trajectory(time_step=1 / 30, smoothness=5.0)
+
+        # Build the camera trajectory
+        logger.info("Creating camera and interpolating its trajectory")
+        start_position = np.array([0, 0, 1.7], dtype=np.float32)
+        start_target = np.array([5, 0, 1], dtype=np.float32)
+        spiral_target = start_position
+        start_quaternion = look_at_quaternion(start_position, start_target)
+        spiral_poses = spiral_camera_trajectory(
+            start_position,
+            start_quaternion,
+            spiral_target,
+            fps=args.fps,
+            duration=args.duration,
+            angular_speed=0.5,
+            z_speed=1,
+            radius_growth=1.5)
+        camera_trajectory = Trajectory()
+        for time, (translation, quaternion) in spiral_poses.items():
+            camera_trajectory.add_keypoint(
+                quaternion=quaternion,
+                position=translation,
+                time=time)
+        camera_trajectory = camera_trajectory.refine_trajectory(
+            time_step=1 / args.fps,
+            smoothness=5.0)
+
+        # Create a color interpolator
+        color_interpolator = ColorInterpolator(
+            [data['rgb_colors'], data['0_level_colors'], data['pred_colors']],
+            [0, 2, 4],
+            fade_duration=1)
+
+        logger.info("Entering the main drawing loop")
+        total_frames = len(camera_trajectory)
+        video_path = (
+            f"{path_image}_{colorname}"
+            f"_engine-{args.engine}"
+            f"_fps-{args.fps}"
+            f"_resolution-{args.resolution[0]}-{args.resolution[1]}"
+            f"_duration-{args.duration}"
+            f"_specularity-{args.specularity}"
+            f"_roughness-{args.roughness}"
+            f"_n_samples-{args.n_samples}"
+            f".mp4")
+        with VideoWriter(
+                video_path,
+                resolution=args.resolution,
+                fps=args.fps) as vw:
+            for index, position in enumerate(camera_trajectory):
+                logger.info(f"Rendering frame {index:03d} / {total_frames:03d}")
+
+                # Set new camera position
+                camera.set_position(
+                    quaternion=position["quaternion"],
+                    translation=position["position"])
+
+                # # Approximate colors from normals and camera_view_direction
+                # camera_viewdir = camera.get_camera_viewdir()
+                # per_vertex_recolor = approximate_colors_from_camera(
+                #     camera_viewdir, normals, per_vertex_color=pointcloud_colors_init.color,
+                #     back_color=(0.0, 0.0, 0.0, 0.0)
+                # )
+                # # Create VertexColor instance and set it to the PointCloud
+                # pointcloud_colors_new = VertexColors(per_vertex_recolor)
+                # pointcloud.update_colors(pointcloud_colors_new)
+
+                # Update the point colors at the current time step
+                t = index / total_frames * args.duration
+                color = color_interpolator.get_color(t)
+                scatter.color = color
+
+                # Render the scene to temporary image
+                img = scene.render(
+                    use_gpu=not args.cpu,
+                    samples=args.n_samples)
+
+                # Read the resulting frame back
+                # Frames have transparent background; perform an
+                # alpha blending with white background instead
+                alpha = img[:, :, 3:4].astype(np.int32)
+                img_white_bkg = ((img[:, :, :3] * alpha + 255 * (255 - alpha)) // 255).astype(np.uint8)
+
+                # Add the frame to the video
+                vw.write(img_white_bkg)
+        logger.info("Rendering complete")
+        logger.info("Compressing video")
+        compress_mp4(
+            video_path,
+            f"{osp.splitext(video_path)[0]}_compressed.mp4",
+            crf=16,
+            preset="slow",
+            codec="libx264")
+        logger.info("Compressing complete")
 
     # # create material
     # poincloud_material = PrincipledBSDFMaterial(specular=0.25, roughness=0.2)
@@ -216,7 +564,7 @@ def main(args):
     # # Render the video frame by frame
     # logger.info("Entering the main drawing loop")
     # total_frames = len(camera_trajectory)
-    # with VideoWriter(args.path, resolution=args.resolution, fps=30) as vw:
+    # with VideoWriter(args.path, resolution=args.resolution, fps=args.fps) as vw:
     #     for index, position in enumerate(camera_trajectory):
     #         logger.info(f"Rendering frame {index:03d} / {total_frames:03d}")
     #         # Set new camera position
@@ -241,30 +589,96 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Blendify example 04: Camera colored PointCloud.")
+    parser = argparse.ArgumentParser(
+        description="Blendify example 04: Camera colored PointCloud.")
 
     # Paths to output files
-    parser.add_argument("-p", "--path", type=str, help="Path to the input data")
-    parser.add_argument("-v", "--voxel", type=float, help="Voxel size")
+    parser.add_argument(
+        "-p",
+        "--path",
+        type=str,
+        help="Path to the input data")
 
-    parser.add_argument("-i", "--images", action='store_true',
-                        help="Whether to render images")
+    # Point cloud parameters
+    parser.add_argument(
+        "-v",
+        "--voxel",
+        type=float,
+        help="Voxel size")
+    parser.add_argument(
+        "--specularity",
+        default=0.1,
+        type=float)
+    parser.add_argument(
+        "--roughness",
+        default=0.2,
+        type=float)
 
     # Rendering parameters
-    parser.add_argument("-n", "--n-samples", default=32, type=int,
-                        help="Number of paths to trace for each pixel in the render (default: 32)")
-    parser.add_argument("-res", "--resolution", default=(2100, 1400), nargs=2, type=int,
-                        help="Rendering resolution, (default: (2100, 1400))")
-    parser.add_argument("--cpu", action="store_true",
-                        help="Use CPU for rendering (by default GPU is used)")
+    parser.add_argument(
+        "--image",
+        action='store_true',
+        help="Whether to render images")
+    parser.add_argument(
+        "--video",
+        action='store_true',
+        help="Whether to render video")
+    parser.add_argument(
+        "--engine",
+        type=str,
+        default="CYCLES",
+        choices=["CYCLES", "BLENDER_EEVEE", "BLENDER_WORKBENCH"],
+        help="Blender rendering engines. Supports 'CYCLES', 'BLENDER_EEVEE', "
+             "'BLENDER_WORKBENCH'? (default: CYCLES)")
+    parser.add_argument(
+        "-n",
+        "--n-samples",
+        default=64,
+        type=int,
+        help="Number of paths to trace for each pixel in the render (default: 64)")
+    parser.add_argument(
+        "--duration",
+        default=20,
+        type=float,
+        help="Duration of the video")
+    parser.add_argument(
+        "--fps",
+        default=30,
+        type=int,
+        help="Number of frames per second in video renderings (default: 20)")
+    parser.add_argument(
+        "-res",
+        "--resolution",
+        default=(2100, 1400),
+        nargs=2,
+        type=int,
+        help="Rendering resolution, (default: (2100, 1400))")
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Use CPU for rendering (by default GPU is used)")
 
     # Other parameters
-    parser.add_argument("-b", "--backend", type=str, default="orig", choices=["orig", "open3d", "pytorch3d"],
-                        help="Backend to use for normal estimation. Orig corresponds to original mesh normals, "
-                             "i.e. no estimation is performed (default: orig)")
+    parser.add_argument(
+        "-b",
+        "--backend",
+        type=str,
+        default="orig",
+        choices=["orig", "open3d", "pytorch3d"],
+        help="Backend to use for normal estimation. Orig corresponds to "
+             "original mesh normals, i.e. no estimation is performed (default: orig)")
 
-    parser.add_argument("-m", "--mode", type=str, default=None,
-                        help="Mode for printing a scene. Some predefined recipes are there.")
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        default=None,
+        help="Mode for printing a scene. Some predefined recipes are there.")
+    parser.add_argument(
+        "--default_color",
+        type=str,
+        default='0_level',
+        help="Color that will be used for displaying in blender.")
 
     arguments = parser.parse_args()
     main(arguments)
