@@ -635,8 +635,16 @@ def main(args):
 
         # Create a color interpolator
         color_interpolator = ColorInterpolator(
-            [data['rgb_colors'], data['0_level_colors'], data['pred_colors']],
-            [0, spin_duration / 2, 3 * spin_duration / 2],
+            [
+                data['rgb_colors'] if 'rgb_colors' in data.keys() else data['intensity_colors'],
+                data['0_level_colors'],
+                data['pred_colors']
+            ],
+            [
+                0,
+                spin_duration / 2,
+                3 * spin_duration / 2
+            ],
             fade_duration=1)
 
         logger.info("Entering the main drawing loop")
