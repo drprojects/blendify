@@ -440,7 +440,7 @@ def main(args):
     # camera_trajectory = camera_trajectory.refine_trajectory(time_step=1/30, smoothness=5.0)
 
     # Add camera to the scene (position will be set in the rendering loop)
-    camera = scene.set_perspective_camera(resolution=args.resolution, fov_x=np.deg2rad(73))
+    camera = scene.set_perspective_camera(resolution=args.resolution, fov_x=np.deg2rad(73), near=0.1, far=1000)
     if args.mode == 'paper_ezsp_dales':
         translation =  np.array([43.99616622924805, 17.057422637939453, 29.741680145263672], dtype=np.float32)
         quaternion = np.array([0.49730759859085083, 0.24891497194766998, 0.3719913959503174, 0.7432017922401428], dtype=np.float32)
@@ -600,8 +600,8 @@ def main(args):
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
         if args.mode == 'paper_ezsp_dales':
-            start_position = np.array([0, 0, 8], dtype=np.float32)
-            start_target = np.array([1, 0, 8], dtype=np.float32)
+            start_position = np.array([0, 0, 10], dtype=np.float32)
+            start_target = np.array([1, 0, 10], dtype=np.float32)
             spiral_target = np.array([0, 0, 0], dtype=np.float32)
             z_max = 200
             r_max = 200
