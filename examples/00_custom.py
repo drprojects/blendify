@@ -603,6 +603,7 @@ def main(args):
             start_position = np.array([0, 0, 10], dtype=np.float32)
             start_target = np.array([1, 0, 10], dtype=np.float32)
             spiral_target = np.array([0, 0, 0], dtype=np.float32)
+            spin_spiral_ratio = 0.3
             z_max = 200
             r_max = 200
             color_keys = ['intensity', '0_level', 'pred']
@@ -610,6 +611,7 @@ def main(args):
             start_position = None
             start_target = None
             spiral_target = None
+            spin_spiral_ratio = None
             z_max = None
             r_max = None
             color_keys = ['rgb', '0_level', 'pred']
@@ -617,11 +619,12 @@ def main(args):
             start_position = np.array([0, 3, 1.7], dtype=np.float32)
             start_target = np.array([5, 0, 1.4], dtype=np.float32)
             spiral_target = start_position
+            spin_spiral_ratio = 0.5
             z_max = 50
             r_max = 50
             color_keys = ['rgb', '0_level', 'pred']
         start_quaternion = look_at_quaternion(start_position, start_target)
-        spin_duration = args.duration / 2
+        spin_duration = args.duration * spin_spiral_ratio
         spiral_duration = args.duration - spin_duration
         spin_poses = spin_around_global_z(
             start_position,
