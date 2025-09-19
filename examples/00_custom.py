@@ -14,6 +14,9 @@ import trimesh
 from videoio import VideoWriter
 import matplotlib.colors as colors
 import subprocess
+import numpy as np
+from scipy.interpolate import CubicSpline
+
 
 from blendify import scene
 from blendify.colors import UniformColors, VertexColors
@@ -151,37 +154,106 @@ def time_steps(fps, duration):
     return np.arange(n_frames) / fps
 
 
+# def spiral_camera_trajectory(
+#         start_translation,
+#         start_quaternion,
+#         target,
+#         fps=20,
+#         duration=10,
+#         angular_speed=0.1,
+#         z_speed=0.05,
+#         radius_growth=0.01):
+#     """Generate a spiral trajectory around a target.
+#
+#     Args:
+#         start_translation: (3,) array-like
+#         start_quaternion: (4,) array-like [w, x, y, z]
+#         target: (3,) array-like
+#         fps: int
+#         duration: float
+#         angular_speed: float, radians per frame
+#         z_speed: float
+#         radius_growth: float
+#
+#     Returns:
+#         dict: {frame_index: (translation (3,), quaternion (4,))}
+#     """
+#     start_loc = np.array(start_translation, dtype=np.float64)
+#     start_quat = np.array(start_quaternion, dtype=np.float64)
+#     start_quat /= np.linalg.norm(start_quat)
+#     target = np.array(target, dtype=np.float64)
+#
+#     r0 = np.linalg.norm(start_loc[:2] - target[:2])
+#     z0 = start_loc[2]
+#
+#     trajectory = {}
+#
+#     for t in time_steps(fps, duration):
+#         if t == 0:
+#             loc = start_loc
+#             quat = start_quat
+#         else:
+#             theta = angular_speed * t
+#             r = r0 + radius_growth * t
+#             x = target[0] + r * np.cos(theta)
+#             y = target[1] + r * np.sin(theta)
+#             z = z0 + z_speed * t
+#             loc = np.array([x, y, z], dtype=np.float64)
+#             quat = look_at_quaternion(loc, target)
+#
+#         trajectory[t] = (loc, quat)
+#
+#     return trajectory
+
+
 def spiral_camera_trajectory(
         start_translation,
         start_quaternion,
         target,
         fps=20,
         duration=10,
-        angular_speed=0.1,
-        z_speed=0.05,
-        radius_growth=0.01):
-    """Generate a spiral trajectory around a target.
+        angular_speed=0.5,
+        z_speed=1.0,
+        radius_growth=1.0,
+        z_curve=None,
+        radius_curve=None):
+    """
+    Spiral camera trajectory with optional variable Z and radius profiles (smooth).
 
-    Args:
-        start_translation: (3,) array-like
-        start_quaternion: (4,) array-like [w, x, y, z]
-        target: (3,) array-like
-        fps: int
-        duration: floar
-        angular_speed: float, radians per frame
-        z_speed: float
-        radius_growth: float
+    start_translation: (3,)
+    start_quaternion: (4,) [w,x,y,z]
+    target: (3,)
+    fps: int
+    duration: float
+    angular_speed: float, radians/sec (ignored if radius_curve used)
+    z_speed: float, units/sec (ignored if z_curve used)
+    radius_growth: float, units/sec (ignored if radius_curve used)
+    z_curve: np.ndarray (n_points,2) [[t0, z0], [t1, z1], ...] optional
+    radius_curve: np.ndarray (n_points,2) [[t0, r0], [t1, r1], ...] optional
 
     Returns:
-        dict: {frame_index: (translation (3,), quaternion (4,))}
+        dict: {frame_index: (translation, quaternion)}
     """
     start_loc = np.array(start_translation, dtype=np.float64)
     start_quat = np.array(start_quaternion, dtype=np.float64)
     start_quat /= np.linalg.norm(start_quat)
     target = np.array(target, dtype=np.float64)
 
-    r0 = np.linalg.norm(start_loc[:2] - target[:2])
-    z0 = start_loc[2]
+    default_radius = np.linalg.norm(start_loc[:2] - target[:2])
+    default_z = start_loc[2]
+
+    # Setup smooth splines if provided
+    if z_curve is not None:
+        z_curve = np.array(z_curve)
+        z_spline = CubicSpline(z_curve[:, 0], z_curve[:, 1])
+    else:
+        z_spline = None
+
+    if radius_curve is not None:
+        radius_curve = np.array(radius_curve)
+        r_spline = CubicSpline(radius_curve[:, 0], radius_curve[:, 1])
+    else:
+        r_spline = None
 
     trajectory = {}
 
@@ -190,17 +262,94 @@ def spiral_camera_trajectory(
             loc = start_loc
             quat = start_quat
         else:
+            # Compute radius
+            if r_spline is not None:
+                r = r_spline(t)
+            else:
+                r = default_radius + radius_growth * t
+
+            # Compute Z
+            if z_spline is not None:
+                z = z_spline(t)
+            else:
+                z = default_z + z_speed * t
+
+            # Angle
             theta = angular_speed * t
-            r = r0 + radius_growth * t
             x = target[0] + r * np.cos(theta)
             y = target[1] + r * np.sin(theta)
-            z = z0 + z_speed * t
             loc = np.array([x, y, z], dtype=np.float64)
+
             quat = look_at_quaternion(loc, target)
 
         trajectory[t] = (loc, quat)
 
     return trajectory
+
+
+def spin_around_global_z(
+        location,
+        start_quaternion,
+        fps=20,
+        duration=10,
+        angular_speed=0.5):
+    """
+    Camera spins around the GLOBAL Z axis at a fixed location.
+
+    Args:
+        location: (3,) fixed camera position
+        start_quaternion: (4,) initial orientation [w, x, y, z]
+        fps: frames per second
+        duration: total duration in seconds
+        angular_speed: radians/second (positive = CCW spin seen from above)
+
+    Returns:
+        dict {time: (translation, quaternion)}
+    """
+    location = np.array(location, dtype=np.float64)
+    start_quat = np.array(start_quaternion, dtype=np.float64)
+    start_quat /= np.linalg.norm(start_quat)
+
+    # Convert starting quaternion to rotation matrix
+    w, x, y, z = start_quat
+    R0 = np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]
+    ])
+
+    # Rotation around GLOBAL Z
+    n_frames = int(np.floor(fps * duration))
+    times = np.arange(n_frames) / fps
+    trajectory = {}
+
+    for t in times:
+        angle = angular_speed * t
+        Rz = np.array([
+            [np.cos(angle), -np.sin(angle), 0],
+            [np.sin(angle), np.cos(angle), 0],
+            [0, 0, 1]
+        ], dtype=np.float64)
+
+        R = Rz @ R0  # apply spin in world coordinates
+        quat = rotmat_to_quat(R)
+
+        trajectory[t] = (location, quat)
+
+    return trajectory
+
+
+def concat_pose_dicts(d1, d2):
+    """
+    Concatenate two pose dicts {time: (loc, quat)}, offsetting times of d2.
+    """
+    if not d1:
+        return dict(d2)
+    if not d2:
+        return dict(d1)
+
+    t_offset = max(d1.keys())
+    return {**d1, **{t + t_offset: pose for t, pose in d2.items()}}
 
 
 def compress_mp4(
@@ -450,21 +599,32 @@ def main(args):
 
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
-        start_position = np.array([0, 0, 1.7], dtype=np.float32)
-        start_target = np.array([5, 0, 1], dtype=np.float32)
+        start_position = np.array([0, 3, 1.7], dtype=np.float32)
+        start_target = np.array([5, 0, 1.4], dtype=np.float32)
         spiral_target = start_position
         start_quaternion = look_at_quaternion(start_position, start_target)
-        spiral_poses = spiral_camera_trajectory(
+        spin_duration = args.duration / 2
+        spiral_duration = args.duration - spin_duration
+        spin_poses = spin_around_global_z(
             start_position,
             start_quaternion,
+            fps=args.fps,
+            duration=spin_duration,
+            angular_speed=np.pi / spin_duration)
+        spiral_poses = spiral_camera_trajectory(
+            spin_poses[list(spin_poses.keys())[-1]][0],
+            spin_poses[list(spin_poses.keys())[-1]][1],
             spiral_target,
             fps=args.fps,
-            duration=args.duration,
-            angular_speed=0.5,
-            z_speed=1,
-            radius_growth=1.5)
+            duration=spiral_duration,
+            angular_speed=3 * np.pi / spiral_duration,
+            z_speed=50 / spiral_duration,
+            radius_growth=50 / spiral_duration,
+            z_curve=None,
+            radius_curve=None)
+        poses = concat_pose_dicts(spin_poses, spiral_poses)
         camera_trajectory = Trajectory()
-        for time, (translation, quaternion) in spiral_poses.items():
+        for time, (translation, quaternion) in poses.items():
             camera_trajectory.add_keypoint(
                 quaternion=quaternion,
                 position=translation,
@@ -476,7 +636,7 @@ def main(args):
         # Create a color interpolator
         color_interpolator = ColorInterpolator(
             [data['rgb_colors'], data['0_level_colors'], data['pred_colors']],
-            [0, 2, 4],
+            [0, spin_duration / 2, 3 * spin_duration / 2],
             fade_duration=1)
 
         logger.info("Entering the main drawing loop")
@@ -536,7 +696,7 @@ def main(args):
         compress_mp4(
             video_path,
             f"{osp.splitext(video_path)[0]}_compressed.mp4",
-            crf=16,
+            crf=28,
             preset="slow",
             codec="libx264")
         logger.info("Compressing complete")
@@ -559,7 +719,8 @@ def main(args):
     # )
 
     # Optionally save blend file with the scene at frame 0
-    scene.export(path_blender)
+    if args.export:
+        scene.export(path_blender)
 
     # # Render the video frame by frame
     # logger.info("Entering the main drawing loop")
@@ -659,6 +820,10 @@ if __name__ == '__main__':
         help="Use CPU for rendering (by default GPU is used)")
 
     # Other parameters
+    parser.add_argument(
+        "--export",
+        action='store_true',
+        help="Whether to export the scene to a .blender file")
     parser.add_argument(
         "-b",
         "--backend",
