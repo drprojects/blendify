@@ -603,9 +603,9 @@ def main(args):
             start_position = np.array([0, 0, 10], dtype=np.float32)
             start_target = np.array([1, 0, 10], dtype=np.float32)
             spiral_target = np.array([0, 0, 0], dtype=np.float32)
-            spin_spiral_ratio = 0.3
-            z_max = 200
-            r_max = 200
+            spin_spiral_ratio = 0.2
+            z_max = 150
+            r_max = 150
             color_keys = ['intensity', '0_level', 'pred']
         elif args.mode == 'paper_ezsp_kitti360':
             start_position = None
