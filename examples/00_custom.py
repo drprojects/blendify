@@ -601,9 +601,11 @@ def main(args):
         logger.info("Creating camera and interpolating its trajectory")
         if args.mode == 'paper_ezsp_dales':
             start_position = np.array([0, 0, 30], dtype=np.float32)
-            start_target = np.array([50, 0, 0], dtype=np.float32)
+            start_target = np.array([40, 40, 0], dtype=np.float32)
             spiral_target = np.array([0, 0, 0], dtype=np.float32)
-            spin_spiral_ratio = 0.2
+            spin_spiral_ratio = 0.4
+            spin_angle = np.pi
+            spiral_angle = 3 * np.pi
             z_max = 150
             r_max = 150
         elif args.mode == 'paper_ezsp_kitti360':
@@ -611,6 +613,8 @@ def main(args):
             start_target = None
             spiral_target = None
             spin_spiral_ratio = None
+            spin_angle = np.pi
+            spiral_angle = 3 * np.pi
             z_max = None
             r_max = None
         elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
@@ -618,6 +622,8 @@ def main(args):
             start_target = np.array([5, 0, 1.4], dtype=np.float32)
             spiral_target = start_position
             spin_spiral_ratio = 0.5
+            spin_angle = np.pi
+            spiral_angle = 3 * np.pi
             z_max = 50
             r_max = 50
         start_quaternion = look_at_quaternion(start_position, start_target)
@@ -628,14 +634,14 @@ def main(args):
             start_quaternion,
             fps=args.fps,
             duration=spin_duration,
-            angular_speed=np.pi / spin_duration)
+            angular_speed=spin_angle / spin_duration)
         spiral_poses = spiral_camera_trajectory(
             spin_poses[list(spin_poses.keys())[-1]][0],
             spin_poses[list(spin_poses.keys())[-1]][1],
             spiral_target,
             fps=args.fps,
             duration=spiral_duration,
-            angular_speed=3 * np.pi / spiral_duration,
+            angular_speed=spiral_angle / spiral_duration,
             z_speed=z_max / spiral_duration,
             radius_growth=r_max / spiral_duration,
             z_curve=None,
@@ -655,8 +661,8 @@ def main(args):
         if args.mode == 'paper_ezsp_dales':
             color_times = [
                 ['intensity', 0],
-                ['0_level', spin_duration],
-                ['pred', 2 * spin_duration]]
+                ['0_level', spin_duration / 2],
+                ['pred', 3 * spin_duration / 2]]
         elif args.mode == 'paper_ezsp_kitti360':
             color_times = [
                 ['rgb', 0],
