@@ -600,13 +600,16 @@ def main(args):
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
         if args.mode == 'paper_ezsp_dales':
-            start_position = np.array([0, 0, 15], dtype=np.float32)
+            start_position = np.array([0, 0, 30], dtype=np.float32)
             start_target = np.array([50, 0, 0], dtype=np.float32)
             spiral_target = np.array([0, 0, 0], dtype=np.float32)
             spin_spiral_ratio = 0.2
             z_max = 150
             r_max = 150
-            color_keys = ['intensity', '0_level', 'pred']
+            color_times = [
+                ['intensity', 0],
+                ['0_level', spin_duration],
+                ['pred', 2 * spin_duration]]
         elif args.mode == 'paper_ezsp_kitti360':
             start_position = None
             start_target = None
@@ -614,7 +617,10 @@ def main(args):
             spin_spiral_ratio = None
             z_max = None
             r_max = None
-            color_keys = ['rgb', '0_level', 'pred']
+            color_times = [
+                ['rgb', 0],
+                ['0_level', spin_duration / 2],
+                ['pred', 3 * spin_duration / 2]]
         elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
             start_position = np.array([0, 3, 1.7], dtype=np.float32)
             start_target = np.array([5, 0, 1.4], dtype=np.float32)
@@ -622,7 +628,10 @@ def main(args):
             spin_spiral_ratio = 0.5
             z_max = 50
             r_max = 50
-            color_keys = ['rgb', '0_level', 'pred']
+            color_times = [
+                ['rgb', 0],
+                ['0_level', spin_duration / 2],
+                ['pred', 3 * spin_duration / 2]]
         start_quaternion = look_at_quaternion(start_position, start_target)
         spin_duration = args.duration * spin_spiral_ratio
         spiral_duration = args.duration - spin_duration
@@ -656,8 +665,8 @@ def main(args):
 
         # Create a color interpolator
         color_interpolator = ColorInterpolator(
-            [data[f'{k}_colors'] for k in color_keys],
-            [0, spin_duration / 2, 3 * spin_duration / 2],
+            [data[f'{ct[0]}_colors'] for ct in color_times],
+            [ct[1] for ct in color_times],
             fade_duration=1)
 
         logger.info("Entering the main drawing loop")
