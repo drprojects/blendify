@@ -600,8 +600,8 @@ def main(args):
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
         if args.mode == 'paper_ezsp_dales':
-            start_position = np.array([0, 0, 10], dtype=np.float32)
-            start_target = np.array([1, 0, 10], dtype=np.float32)
+            start_position = np.array([0, 0, 15], dtype=np.float32)
+            start_target = np.array([50, 0, 0], dtype=np.float32)
             spiral_target = np.array([0, 0, 0], dtype=np.float32)
             spin_spiral_ratio = 0.2
             z_max = 150
