@@ -601,11 +601,11 @@ def main(args):
         logger.info("Creating camera and interpolating its trajectory")
         if args.mode == 'paper_ezsp_dales':
             start_position = np.array([0, 0, 30], dtype=np.float32)
-            start_target = np.array([40, 40, 0], dtype=np.float32)
-            spiral_target = np.array([0, 0, 0], dtype=np.float32)
+            start_target = np.array([0, 40, 0], dtype=np.float32)
+            spiral_target = start_position
             spin_spiral_ratio = 0.4
-            spin_angle = np.pi
-            spiral_angle = 3 * np.pi
+            spin_angle = np.pi / 2
+            spiral_angle = 2 * np.pi
             z_max = 150
             r_max = 150
         elif args.mode == 'paper_ezsp_kitti360':
@@ -662,7 +662,7 @@ def main(args):
             color_times = [
                 ['intensity', 0],
                 ['0_level', spin_duration / 2],
-                ['pred', 3 * spin_duration / 2]]
+                ['pred', 2 * spin_duration]]
         elif args.mode == 'paper_ezsp_kitti360':
             color_times = [
                 ['rgb', 0],
