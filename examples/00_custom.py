@@ -681,7 +681,7 @@ def main(args):
         logger.info("Entering the main drawing loop")
         total_frames = len(camera_trajectory)
         video_path = (
-            f"{path_image}_{colorname}"
+            f"{path_image}"
             f"_engine-{args.engine}"
             f"_fps-{args.fps}"
             f"_resolution-{args.resolution[0]}-{args.resolution[1]}"
