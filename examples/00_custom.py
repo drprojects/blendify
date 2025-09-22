@@ -614,22 +614,25 @@ def main(args):
             duration=spin_duration,
             angular_speed=spin_angle / spin_duration)
 
-        spin_poses = path_trajectory(
-            [
-                0 * spin_duration / 4,
-                1 * spin_duration / 4,
-                2 * spin_duration / 4,
-                3 * spin_duration / 4,
-                4 * spin_duration / 4,
-            ],
-            [
-                [-66, 10, 4.5],
-                [-47, 28, 4.5],
-                [-37, 36, 4.5],
-                [-30, 32, 4.5],
-                [3, 4, 4.5],
-            ],
-            fps=args.fps)
+        # Dirty overwrite of the "spin" trajectory by a "path"
+        # trajectory for KITTI360
+        if args.mode == 'paper_ezsp_kitti360':
+            spin_poses = path_trajectory(
+                [
+                    0 * spin_duration / 4,
+                    1 * spin_duration / 4,
+                    2 * spin_duration / 4,
+                    3 * spin_duration / 4,
+                    4 * spin_duration / 4,
+                ],
+                [
+                    [-66, 10, 4.5],
+                    [-47, 28, 4.5],
+                    [-37, 36, 4.5],
+                    [-30, 32, 4.5],
+                    [3, 4, 4.5],
+                ],
+                fps=args.fps)
 
         spiral_poses = spiral_camera_trajectory(
             spin_poses[list(spin_poses.keys())[-1]][0],
