@@ -10,19 +10,13 @@ import blender_plots as bplt
 import numpy as np
 import os.path as osp
 import torch
-import trimesh
 from videoio import VideoWriter
 import matplotlib.colors as colors
 import subprocess
-import numpy as np
 from scipy.interpolate import CubicSpline
 
-
 from blendify import scene
-from blendify.colors import UniformColors, VertexColors
-from blendify.materials import PrincipledBSDFMaterial
 from blendify.utils.camera_trajectory import Trajectory
-from blendify.utils.pointcloud import estimate_normals_from_pointcloud, approximate_colors_from_camera
 
 
 def adjust_color(color, scale_red=1, scale_saturation=1):
@@ -154,58 +148,6 @@ def time_steps(fps, duration):
     return np.arange(n_frames) / fps
 
 
-# def spiral_camera_trajectory(
-#         start_translation,
-#         start_quaternion,
-#         target,
-#         fps=20,
-#         duration=10,
-#         angular_speed=0.1,
-#         z_speed=0.05,
-#         radius_growth=0.01):
-#     """Generate a spiral trajectory around a target.
-#
-#     Args:
-#         start_translation: (3,) array-like
-#         start_quaternion: (4,) array-like [w, x, y, z]
-#         target: (3,) array-like
-#         fps: int
-#         duration: float
-#         angular_speed: float, radians per frame
-#         z_speed: float
-#         radius_growth: float
-#
-#     Returns:
-#         dict: {frame_index: (translation (3,), quaternion (4,))}
-#     """
-#     start_loc = np.array(start_translation, dtype=np.float64)
-#     start_quat = np.array(start_quaternion, dtype=np.float64)
-#     start_quat /= np.linalg.norm(start_quat)
-#     target = np.array(target, dtype=np.float64)
-#
-#     r0 = np.linalg.norm(start_loc[:2] - target[:2])
-#     z0 = start_loc[2]
-#
-#     trajectory = {}
-#
-#     for t in time_steps(fps, duration):
-#         if t == 0:
-#             loc = start_loc
-#             quat = start_quat
-#         else:
-#             theta = angular_speed * t
-#             r = r0 + radius_growth * t
-#             x = target[0] + r * np.cos(theta)
-#             y = target[1] + r * np.sin(theta)
-#             z = z0 + z_speed * t
-#             loc = np.array([x, y, z], dtype=np.float64)
-#             quat = look_at_quaternion(loc, target)
-#
-#         trajectory[t] = (loc, quat)
-#
-#     return trajectory
-
-
 def spiral_camera_trajectory(
         start_translation,
         start_quaternion,
@@ -287,7 +229,7 @@ def spiral_camera_trajectory(
     return trajectory
 
 
-def spin_around_global_z(
+def spin_around_trajectory(
         location,
         start_quaternion,
         fps=20,
@@ -335,6 +277,86 @@ def spin_around_global_z(
         quat = rotmat_to_quat(R)
 
         trajectory[t] = (location, quat)
+
+    return trajectory
+
+
+def look_rotation(forward: np.ndarray, up: np.ndarray = np.array([0, 0, 1])):
+    """
+    Build quaternion [w, x, y, z] from forward and up vectors.
+    Similar to Blender's 'track to' constraint.
+    """
+    forward = forward / np.linalg.norm(forward)
+    right = np.cross(up, forward)
+    right /= np.linalg.norm(right)
+    true_up = np.cross(forward, right)
+
+    R = np.stack([right, true_up, forward], axis=1)
+
+    # Rotation matrix to quaternion
+    trace = np.trace(R)
+    if trace > 0:
+        s = 0.5 / np.sqrt(trace + 1.0)
+        w = 0.25 / s
+        x = (R[2, 1] - R[1, 2]) * s
+        y = (R[0, 2] - R[2, 0]) * s
+        z = (R[1, 0] - R[0, 1]) * s
+    else:
+        if R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+            w = (R[2, 1] - R[1, 2]) / s
+            x = 0.25 * s
+            y = (R[0, 1] + R[1, 0]) / s
+            z = (R[0, 2] + R[2, 0]) / s
+        elif R[1, 1] > R[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+            w = (R[0, 2] - R[2, 0]) / s
+            x = (R[0, 1] + R[1, 0]) / s
+            y = 0.25 * s
+            z = (R[1, 2] + R[2, 1]) / s
+        else:
+            s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+            w = (R[1, 0] - R[0, 1]) / s
+            x = (R[0, 2] + R[2, 0]) / s
+            y = (R[1, 2] + R[2, 1]) / s
+            z = 0.25 * s
+
+    q = np.array([w, x, y, z], dtype=np.float64)
+    return q / np.linalg.norm(q)
+
+
+def path_trajectory(times, positions, fps=20, up=np.array([0, 0, 1])):
+    """
+    Generate camera poses along a smooth path.
+
+    Args:
+        times: list of keyframe times (ascending)
+        positions: list of 3D positions (same length as times)
+        fps: frames per second
+        up: world up vector for orientation
+
+    Returns:
+        dict {time: (position, quaternion)}
+    """
+    times = np.asarray(times, dtype=float)
+    positions = np.asarray(positions, dtype=float)
+    assert positions.shape[0] == len(times)
+
+    # Build cubic splines per coordinate
+    splines = [CubicSpline(times, positions[:, i]) for i in range(3)]
+
+    total_duration = times[-1]
+    n_frames = int(np.floor(total_duration * fps))
+    frame_times = np.linspace(times[0], total_duration, n_frames)
+
+    trajectory = {}
+    for t in frame_times:
+        pos = np.array([spline(t) for spline in splines])
+        vel = np.array([spline(t, 1) for spline in splines])  # derivative
+        if np.linalg.norm(vel) < 1e-6:  # avoid zero velocity
+            vel = np.array([1, 0, 0])
+        quat = look_rotation(vel, up)
+        trajectory[t] = (pos, quat)
 
     return trajectory
 
@@ -422,23 +444,6 @@ def main(args):
     # Transparent background
     bpy.context.scene.render.film_transparent = True
 
-    # # Interpolation of the camera trajectory
-    # # Start, middle and end points of the camera trajectory
-    # left_translation, left_rotation = \
-    #     np.array([-0.5, -6.5, 2.4], dtype=np.float32), np.array([0.866, 0.5, 0.0, 0.0], dtype=np.float32)
-    # middle_translation, middle_rotation = \
-    #     np.array([4, -6.5, 2.4], dtype=np.float32), np.array([0.793, 0.505, 0.184, 0.288], dtype=np.float32)
-    # right_translation, right_rotation = \
-    #     np.array([6.5, -0.7, 2.4], dtype=np.float32), np.array([0.612, 0.354, 0.354, 0.612], dtype=np.float32)
-    #
-    # # Interpolate camera trajectory
-    # logger.info("Creating camera and interpolating its trajectory")
-    # camera_trajectory = Trajectory()
-    # camera_trajectory.add_keypoint(quaternion=left_rotation, position=left_translation, time=0)
-    # camera_trajectory.add_keypoint(quaternion=middle_rotation, position=middle_translation, time=2.5)
-    # camera_trajectory.add_keypoint(quaternion=right_rotation, position=right_translation, time=5)
-    # camera_trajectory = camera_trajectory.refine_trajectory(time_step=1/30, smoothness=5.0)
-
     # Add camera to the scene (position will be set in the rendering loop)
     camera = scene.set_perspective_camera(resolution=args.resolution, fov_x=np.deg2rad(73), near=0.1, far=1000)
     if args.mode == 'paper_ezsp_dales':
@@ -500,17 +505,6 @@ def main(args):
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode == 'paper_ezsp_s3dis_2':
         bg.inputs[1].default_value = 0.7  # strength
-
-    # # Camera colored PointCloud
-    # # source of the mesh https://graphics.stanford.edu/data/3Dscanrep/
-    # # load only vertices of the example mesh
-    # mesh = trimesh.load("./assets/bunny.obj", process=False, validate=False)
-    # vertices = mesh.vertices
-    # # estimate normals
-    # if args.backend == "orig":
-    #     normals = np.array(mesh.vertex_normals)
-    # else:
-    #     normals = estimate_normals_from_pointcloud(vertices, backend=args.backend, device="cpu" if args.cpu else "cuda")
 
     # Read input data
     root = osp.dirname(args.path)
@@ -578,25 +572,9 @@ def main(args):
             bpy.ops.render.render(write_still=True)
             # scatter.base_object.hide_render = True
             # bpy.data.objects.remove(scatter.base_object, do_unlink=True)
-            logger.info(f"Renedering of {colorname} complete")
+            logger.info(f"Rendering of {colorname} complete")
 
     if args.video:
-        # # Interpolation of the camera trajectory
-        # # Start, middle and end points of the camera trajectory
-        # left_translation, left_rotation = \
-        #     np.array([-0.5, -6.5, 2.4], dtype=np.float32), np.array([0.866, 0.5, 0.0, 0.0], dtype=np.float32)
-        # middle_translation, middle_rotation = \
-        #     np.array([4, -6.5, 2.4], dtype=np.float32), np.array([0.793, 0.505, 0.184, 0.288], dtype=np.float32)
-        # right_translation, right_rotation = \
-        #     np.array([6.5, -0.7, 2.4], dtype=np.float32), np.array([0.612, 0.354, 0.354, 0.612], dtype=np.float32)
-        # # Interpolate camera trajectory
-        # logger.info("Creating camera and interpolating its trajectory")
-        # camera_trajectory = Trajectory()
-        # camera_trajectory.add_keypoint(quaternion=left_rotation, position=left_translation, time=0)
-        # camera_trajectory.add_keypoint(quaternion=middle_rotation, position=middle_translation, time=2.5)
-        # camera_trajectory.add_keypoint(quaternion=right_rotation, position=right_translation, time=5)
-        # camera_trajectory = camera_trajectory.refine_trajectory(time_step=1 / 30, smoothness=5.0)
-
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
         if args.mode == 'paper_ezsp_dales':
@@ -609,14 +587,14 @@ def main(args):
             z_max = 150
             r_max = 150
         elif args.mode == 'paper_ezsp_kitti360':
-            start_position = None
-            start_target = None
-            spiral_target = None
-            spin_spiral_ratio = None
-            spin_angle = np.pi
-            spiral_angle = 3 * np.pi
-            z_max = None
-            r_max = None
+            start_position = np.array([-36, 38, 5], dtype=np.float32)
+            start_target = np.array([-65, 20, 2], dtype=np.float32)
+            spiral_target = np.array([3, 4, 4.5], dtype=np.float32)
+            spin_spiral_ratio = 0.8
+            spin_angle = 2 * np.pi / 3
+            spiral_angle = np.pi / 2
+            z_max = 75
+            r_max = 150
         elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
             start_position = np.array([0, 3, 1.7], dtype=np.float32)
             start_target = np.array([5, 0, 1.4], dtype=np.float32)
@@ -629,12 +607,30 @@ def main(args):
         start_quaternion = look_at_quaternion(start_position, start_target)
         spin_duration = args.duration * spin_spiral_ratio
         spiral_duration = args.duration - spin_duration
-        spin_poses = spin_around_global_z(
+        spin_poses = spin_around_trajectory(
             start_position,
             start_quaternion,
             fps=args.fps,
             duration=spin_duration,
             angular_speed=spin_angle / spin_duration)
+
+        spin_poses = path_trajectory(
+            [
+                0 * spin_duration / 4,
+                1 * spin_duration / 4,
+                2 * spin_duration / 4,
+                3 * spin_duration / 4,
+                4 * spin_duration / 4,
+            ],
+            [
+                [-66, 10, 4.5],
+                [-47, 28, 4.5],
+                [-37, 36, 4.5],
+                [-30, 32, 4.5],
+                [3, 4, 4.5],
+            ],
+            fps=args.fps)
+
         spiral_poses = spiral_camera_trajectory(
             spin_poses[list(spin_poses.keys())[-1]][0],
             spin_poses[list(spin_poses.keys())[-1]][1],
@@ -667,7 +663,7 @@ def main(args):
             color_times = [
                 ['rgb', 0],
                 ['0_level', spin_duration / 2],
-                ['pred', 3 * spin_duration / 2]]
+                ['pred', spin_duration]]
         elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
             color_times = [
                 ['rgb', 0],
@@ -702,16 +698,6 @@ def main(args):
                     quaternion=position["quaternion"],
                     translation=position["position"])
 
-                # # Approximate colors from normals and camera_view_direction
-                # camera_viewdir = camera.get_camera_viewdir()
-                # per_vertex_recolor = approximate_colors_from_camera(
-                #     camera_viewdir, normals, per_vertex_color=pointcloud_colors_init.color,
-                #     back_color=(0.0, 0.0, 0.0, 0.0)
-                # )
-                # # Create VertexColor instance and set it to the PointCloud
-                # pointcloud_colors_new = VertexColors(per_vertex_recolor)
-                # pointcloud.update_colors(pointcloud_colors_new)
-
                 # Update the point colors at the current time step
                 t = index / total_frames * args.duration
                 color = color_interpolator.get_color(t)
@@ -740,52 +726,9 @@ def main(args):
             codec="libx264")
         logger.info("Compressing complete")
 
-    # # create material
-    # poincloud_material = PrincipledBSDFMaterial(specular=0.25, roughness=0.2)
-    # # create default color (will be changed in the rendering loop)
-    # pointcloud_colors_init = UniformColors((51/255, 204/255, 204/255))
-    # add pointcloud to the scene
-    # pointcloud = scene.renderables.add_pointcloud(
-    #     vertices=vertices, material=poincloud_material, colors=pointcloud_colors_init, point_size=0.03,
-    #     particle_emission_strength=0.1, quaternion=(1, 0, 0, 0), translation=(0, 0, 0), base_primitive="SPHERE"
-    # )
-
-    # scatter = bplt.Scatter(
-    #     np.random.rand(n, 3) * 50,
-    #     color=np.random.rand(n, 3),
-    #     marker_type="spheres",
-    #     radius=1.5
-    # )
-
     # Optionally save blend file with the scene at frame 0
     if args.export:
         scene.export(path_blender)
-
-    # # Render the video frame by frame
-    # logger.info("Entering the main drawing loop")
-    # total_frames = len(camera_trajectory)
-    # with VideoWriter(args.path, resolution=args.resolution, fps=args.fps) as vw:
-    #     for index, position in enumerate(camera_trajectory):
-    #         logger.info(f"Rendering frame {index:03d} / {total_frames:03d}")
-    #         # Set new camera position
-    #         camera.set_position(quaternion=position["quaternion"], translation=position["position"])
-    #         # Approximate colors from normals and camera_view_direction
-    #         camera_viewdir = camera.get_camera_viewdir()
-    #         per_vertex_recolor = approximate_colors_from_camera(
-    #             camera_viewdir, normals, per_vertex_color=pointcloud_colors_init.color, back_color=(0.0, 0.0, 0.0, 0.0)
-    #         )
-    #         # Create VertexColor instance and set it to the PointCloud
-    #         pointcloud_colors_new = VertexColors(per_vertex_recolor)
-    #         pointcloud.update_colors(pointcloud_colors_new)
-    #         # Render the scene to temporary image
-    #         img = scene.render(use_gpu=not args.cpu, samples=args.n_samples)
-    #         # Read the resulting frame back
-    #         # Frames have transparent background; perform an alpha blending with white background instead
-    #         alpha = img[:, :, 3:4].astype(np.int32)
-    #         img_white_bkg = ((img[:, :, :3] * alpha + 255 * (255 - alpha)) // 255).astype(np.uint8)
-    #         # Add the frame to the video
-    #         vw.write(img_white_bkg)
-    # logger.info("Rendering complete")
 
 
 if __name__ == '__main__':
