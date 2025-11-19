@@ -462,6 +462,37 @@ def main(args):
         translation = np.array([-0.12195667624473572, -6.851565361022949, 5.126280784606934], dtype=np.float32)
         quaternion = np.array([0.9126590490341187, 0.40860432386398315, 0.0006827776087448001, -0.009779075160622597], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_multiscale_resolutions':
+        translation = np.array([-0.730396568775177, -0.17812800407409668, 2.0655770301818848], dtype=np.float32)
+        quaternion = np.array([0.830621063709259, 0.4501716196537018, -0.10737811028957367, -0.3096523582935333], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_semseg_scene0030_00':
+        translation = np.array([0.5710775256156921, 3.436332941055298, 6.617712497711182], dtype=np.float32)
+        quaternion = np.array([0.09742767363786697, 0.026836074888706207, 0.2641966640949249, 0.9591599702835083], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_semseg_scene0169_00':
+        translation = np.array([-1.2411928176879883, -2.975771188735962, 6.083170413970947], dtype=np.float32)
+        quaternion = np.array([0.9348678588867188, 0.274120569229126, -0.05881626531481743, -0.21776331961154938], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_semseg_scene0378_02':
+        translation = np.array([0.6095614433288574, 0.890741229057312, 5.776294231414795], dtype=np.float32)
+        quaternion = np.array([0.214557945728302, 0.022599322721362114, 0.11913300305604935, 0.9691550135612488], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_semseg_scene0406_02':
+        translation = np.array([-0.9438729286193848, 0.38966935873031616, 3.5319409370422363], dtype=np.float32)
+        quaternion = np.array([0.10252528637647629, 0.02483103796839714, 0.19308218359947205, 0.975495457649231], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_semseg_scene0645_01':
+        translation = np.array([0.8784829378128052, 0.3396054804325104, 8.742258071899414], dtype=np.float32)
+        quaternion = np.array([0.21838167309761047, 0.0794510766863823, 0.057358015328645706, 0.9709311127662659], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_semseg_scene0651_00':
+        translation = np.array([-0.6995250582695007, -0.2804234027862549, 4.767136096954346], dtype=np.float32)
+        quaternion = np.array([0.9844140410423279, 0.09081237763166428, -0.027085987851023674, -0.1481495052576065], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+
+
+
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -488,6 +519,8 @@ def main(args):
     elif args.mode == 'paper_ezsp_s3dis_2':
         bpy.context.object.data.energy = 2.2
         bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
+    elif args.mode.startswith('paper_litept_scannet_semseg'):
+        bpy.context.object.data.energy = 1.5
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -505,6 +538,8 @@ def main(args):
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode == 'paper_ezsp_s3dis_2':
         bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode.startswith('paper_litept_scannet_semseg'):
+        bg.inputs[1].default_value = 0.9  # strength
 
     # Read input data
     root = osp.dirname(args.path)
