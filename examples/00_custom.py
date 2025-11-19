@@ -490,6 +490,30 @@ def main(args):
         translation = np.array([-0.6995250582695007, -0.2804234027862549, 4.767136096954346], dtype=np.float32)
         quaternion = np.array([0.9844140410423279, 0.09081237763166428, -0.027085987851023674, -0.1481495052576065], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_stru3d_semseg_scene_03022_room_8765':
+        translation = np.array([-0.3661176860332489, -0.011110145598649979, 5.475278854370117], dtype=np.float32)
+        quaternion = np.array([0.702695906162262, 0.034513816237449646, -0.028601357713341713, -0.7100768685340881], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_stru3d_semseg_scene_03034_room_401':
+        translation = np.array([1.1356086730957031, -1.1455254554748535, 8.321700096130371], dtype=np.float32)
+        quaternion = np.array([0.9960197806358337, 0.0889928862452507, 0.004876633174717426, -0.0010398455196991563], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_stru3d_semseg_scene_03113_room_560':
+        translation = np.array([-0.536615252494812, 1.0438051223754883, 5.901821613311768], dtype=np.float32)
+        quaternion = np.array([0.001395018887706101, -0.0036766876000910997, 0.11427392065525055, 0.9934415221214294], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_stru3d_semseg_scene_03195_room_1764':
+        translation = np.array([0.7700258493423462, 0.011294008232653141, 4.823118209838867], dtype=np.float32)
+        quaternion = np.array([0.7043673992156982, 0.07746528834104538, 0.08040645718574524, 0.7009996771812439], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_stru3d_semseg_scene_03223_room_4894':
+        translation = np.array([-0.10034395009279251, -0.057335224002599716, 4.6524505615234375], dtype=np.float32)
+        quaternion = np.array([0.9999446272850037, 0.009804977104067802, 0.0036866941954940557, -0.0010302967857569456], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_stru3d_semseg_scene_03237_room_2846':
+        translation = np.array([0.3447108864784241, 0.03353601321578026, 4.648366451263428], dtype=np.float32)
+        quaternion = np.array([0.7067402601242065, 0.038907717913389206, 0.04402199387550354, 0.7050294876098633], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
 
 
 
@@ -521,6 +545,8 @@ def main(args):
         bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
     elif args.mode.startswith('paper_litept_scannet_semseg'):
         bpy.context.object.data.energy = 1.5
+    elif args.mode.startswith('paper_litept_stru3d_semseg'):
+        bpy.context.object.data.energy = 1.5
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -540,6 +566,8 @@ def main(args):
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode.startswith('paper_litept_scannet_semseg'):
         bg.inputs[1].default_value = 0.9  # strength
+    elif args.mode.startswith('paper_litept_stru3d_semseg'):
+        bg.inputs[1].default_value = 1.2  # strength
 
     # Read input data
     root = osp.dirname(args.path)
