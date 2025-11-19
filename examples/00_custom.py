@@ -514,9 +514,54 @@ def main(args):
         translation = np.array([0.3447108864784241, 0.03353601321578026, 4.648366451263428], dtype=np.float32)
         quaternion = np.array([0.7067402601242065, 0.038907717913389206, 0.04402199387550354, 0.7050294876098633], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
-
-
-
+    elif args.mode == 'paper_litept_nuscenes_semseg_049d115cb992491b8de81f45e9ecc803':
+        translation = np.array([-1.6669714450836182, 26.397863388061523, 17.029747009277344], dtype=np.float32)
+        quaternion = np.array([0.041050706058740616, 0.026643119752407074, -0.5437620282173157, -0.8378113508224487], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_nuscenes_semseg_1ccdbec944bd4994b91aa3d0af8d285c':
+        translation = np.array([13.539493560791016, -31.683805465698242, 18.330381393432617], dtype=np.float32)
+        quaternion = np.array([0.8217780590057373, 0.555506706237793, 0.07675204426050186, 0.10100644081830978], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_nuscenes_semseg_2f678cb1e67d42ae9a04401f9cc1e6be':
+        translation = np.array([29.993968963623047, -11.73816204071045, 13.352730751037598], dtype=np.float32)
+        quaternion = np.array([0.6480386257171631, 0.4415041506290436, 0.3566734492778778, 0.5078426003456116], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_nuscenes_semseg_5f8393250fae4960b501cb6055614547':
+        translation = np.array([9.246944427490234, 48.104496002197266, 20.54415512084961], dtype=np.float32)
+        quaternion = np.array([0.12811481952667236, 0.06082574278116226, 0.465190052986145, 0.873776376247406], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_nuscenes_semseg_6bfd64d0778842288608be82d7e36371':
+        translation = np.array([-27.46445655822754, 18.978410720825195, 37.58072280883789], dtype=np.float32)
+        quaternion = np.array([0.5536229014396667, 0.19715970754623413, -0.27144017815589905, -0.7622007727622986], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_nuscenes_semseg_8f78c446a68d4854bfb7cdfa1c7097d2':
+        translation = np.array([-9.895901679992676, 15.226813316345215, 19.999162673950195], dtype=np.float32)
+        quaternion = np.array([0.19350597262382507, 0.11946077644824982, 0.5357224345207214, 0.813194990158081], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_semseg_segment-11037651371539287009_77_670_97_670_with_camera_labels_1507944303393935':
+        translation = np.array([-24.74045181274414, -1.8987843990325928, 17.814373016357422], dtype=np.float32)
+        quaternion = np.array([0.6321805715560913, 0.3547615110874176, -0.3300589323043823, -0.6046100854873657], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_semseg_segment-18252111882875503115_378_471_398_471_with_camera_labels_1509125955575722':
+        translation = np.array([-32.836299896240234, 30.25058937072754, 21.363615036010742], dtype=np.float32)
+        quaternion = np.array([0.3692755401134491, 0.20747537910938263, -0.4307706356048584, -0.7968853116035461], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_semseg_segment-18333922070582247333_320_280_340_280_with_camera_labels_1507326323829964':
+        translation = np.array([-53.11225509643555, 2.3480372428894043, 18.724817276000977], dtype=np.float32)
+        quaternion = np.array([0.599420428276062, 0.36403462290763855, -0.3615887463092804, -0.6143513321876526], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_semseg_segment-3077229433993844199_1080_000_1100_000_with_camera_labels_1553271550525306':
+        translation = np.array([8.384597778320312, -15.586426734924316, 44.270565032958984], dtype=np.float32)
+        quaternion = np.array([0.9985811114311218, 0.027893105521798134, 0.0012666245456784964, 0.04534531012177467], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_semseg_segment-8956556778987472864_3404_790_3424_790_with_camera_labels_1513450837409246':
+        translation = np.array([6.465387344360352, 10.621289253234863, 26.19098663330078], dtype=np.float32)
+        quaternion = np.array([0.051066912710666656, 0.013404211029410362, 0.34771621227264404, 0.9361121654510498], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_semseg_segment-9041488218266405018_6454_030_6474_030_with_camera_labels_1508979405218294':
+        translation = np.array([-28.028162002563477, 12.82093334197998, 18.361310958862305], dtype=np.float32)
+        quaternion = np.array([0.4304896891117096, 0.252314031124115, -0.4262278079986572, -0.7545503377914429], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -547,6 +592,14 @@ def main(args):
         bpy.context.object.data.energy = 1.5
     elif args.mode.startswith('paper_litept_stru3d_semseg'):
         bpy.context.object.data.energy = 1.5
+    elif args.mode.startswith('paper_litept_nuscenes_semseg'):
+        bpy.context.object.data.energy = 3.5
+        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
+        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
+    elif args.mode.startswith('paper_litept_waymo_semseg'):
+        bpy.context.object.data.energy = 3.5
+        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
+        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -568,6 +621,10 @@ def main(args):
         bg.inputs[1].default_value = 0.9  # strength
     elif args.mode.startswith('paper_litept_stru3d_semseg'):
         bg.inputs[1].default_value = 1.2  # strength
+    elif args.mode.startswith('paper_litept_nuscenes_semseg'):
+        bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode.startswith('paper_litept_waymo_semseg'):
+        bg.inputs[1].default_value = 0.7  # strength
 
     # Read input data
     root = osp.dirname(args.path)
