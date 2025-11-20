@@ -4,13 +4,22 @@ from mathutils import Vector
 import numpy as np
 import time
 from plyfile import PlyData
+from scipy.spatial import ConvexHull
 
 
 LABEL_MAP = {
-    (1.0, 0.0, 0.0): "Vehicle",     # (255,0,0)
-    (0.0, 1.0, 0.0): "Pedestrian",  # (0,255,0)
-    (0.0, 0.0, 1.0): "Cyclist",     # (0,0,255)
+    (0, 0, 255): "Vehicle",     # (255,0,0)
+    (255, 0, 0): "Pedestrian",  # (0,255,0)
+    (0, 255, 0): "Cyclist",     # (0,0,255)
 }
+
+COLOR_MAP_256 = {
+    "Vehicle": (75, 112, 183),
+    "Pedestrian": (230, 25, 75),
+    "Cyclist": (245, 158, 37),
+}
+
+COLOR_MAP = {k: tuple(c / 256 for c in color) for k, color in COLOR_MAP_256.items()}
 
 BOX_EDGES = [
     (0,1), (1,2), (2,3), (3,0),   # top loop
@@ -47,9 +56,72 @@ def load_ply_bboxes(path):
     for i in range(num):
         pts = xyz[i*8:(i+1)*8]
         col = rgb[i*8]   # first point color
-        bboxes.append((pts, col))
+        label = rgb_to_label(col)
+        col = COLOR_MAP[label]
+        bboxes.append((pts, col, label))
 
     return bboxes
+
+
+def box_volume(corners):
+    hull = ConvexHull(corners)
+    return hull.volume
+
+
+def intersect_boxes(corners_a, corners_b):
+    """
+    Computes intersection volume of two convex polyhedra given 8 corners each.
+    Uses halfspace intersection (scipy).
+    """
+    from scipy.spatial import HalfspaceIntersection
+
+    def poly_halfspaces(pts):
+        hull = ConvexHull(pts)
+        eqs = hull.equations  # shape (F, 4): normal + offset
+        return eqs
+
+    # get halfspaces
+    H = np.vstack([poly_halfspaces(corners_a),
+                   poly_halfspaces(corners_b)])
+
+    # interior point needed → take mean of both boxes
+    interior = 0.5 * (corners_a.mean(0) + corners_b.mean(0))
+
+    try:
+        hs = HalfspaceIntersection(H, interior)
+        vol = ConvexHull(hs.intersections).volume
+    except:
+        vol = 0.0
+
+    return vol
+
+
+def iou_3d(corners_a, corners_b):
+    volA = box_volume(corners_a)
+    volB = box_volume(corners_b)
+    inter = intersect_boxes(corners_a, corners_b)
+    union = volA + volB - inter
+    if union <= 1e-6:
+        return 0.0
+    return inter / union
+
+
+def nms_3d(bboxes, scores, iou_threshold=0.3):
+    idxs = np.argsort(scores)[::-1]  # descending
+    keep = []
+
+    while len(idxs) > 0:
+        best = idxs[0]
+        keep.append(best)
+
+        remaining = []
+        for i in idxs[1:]:
+            iou = iou_3d(bboxes[best], bboxes[i])
+            if iou < iou_threshold:
+                remaining.append(i)
+        idxs = np.array(remaining)
+
+    return keep
 
 
 def make_solid_material(name, color):
@@ -135,6 +207,7 @@ def draw_bbox(
 ):
 
     label = rgb_to_label(color)
+    color = COLOR_MAP[label]
 
     # Parent empty
     empty = bpy.data.objects.new(f"{name_prefix}_{label}", None)
@@ -321,10 +394,23 @@ def draw_bboxes(
         face_alpha=0.05,
         sphere_r=0.05,
         edge_r=0.02,
+        iou_threshold=0.1,
         prefix="bbox",
 ):
+    # Read the bboxes from ply format
+    # TODO: this is specific to the waymo-litept files Yuanwen sent...
     bboxes = load_ply_bboxes(path)
-    for k, (points, color) in enumerate(bboxes):
+
+    # Remove overlapping boxes
+    indices_to_keep = nms_3d(
+        [b[0] for b in bboxes],
+        scores=np.ones(len(bboxes)),
+        iou_threshold=iou_threshold,
+    )
+    bboxes = [bboxes[i] for i in indices_to_keep]
+
+    # Draw boxes in blender
+    for k, (points, color, label) in enumerate(bboxes):
         draw_bbox_fast(
             points,
             color,

@@ -602,13 +602,29 @@ def main(args):
         quaternion = np.array([0.8152374625205994, 0.3115808665752411, -0.1690923422574997, -0.4579443335533142], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
     elif args.mode == 'paper_litept_waymo_det_segment-13336883034283882790_7100_000_7120_000_with_camera_labels_157':
-        translation = np.array([0, 0, 10], dtype=np.float32)
-        quaternion = np.array([0, 0, 0, 0], dtype=np.float32)
+        translation = np.array([42.82041931152344, 4.8843674659729, 6.764627456665039], dtype=np.float32)
+        quaternion = np.array([0.6482436060905457, 0.41732335090637207, 0.35241055488586426, 0.5304980874061584], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
-
-
-
-
+    elif args.mode == 'paper_litept_waymo_det_segment-13356997604177841771_3360_000_3380_000_with_camera_labels_002':
+        translation = np.array([-23.578227996826172, 45.050628662109375, 64.74434661865234], dtype=np.float32)
+        quaternion = np.array([0.004924893379211426, 0.0061909714713692665, -0.262095183134079, -0.9650095701217651], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_det_segment-14300007604205869133_1160_000_1180_000_with_camera_labels_149':
+        translation = np.array([34.866790771484375, -17.64608383178711, 16.711875915527344], dtype=np.float32)
+        quaternion = np.array([0.8245905041694641, 0.41970524191856384, 0.17838475108146667, 0.33477896451950073], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_det_segment-30779396576054160_1880_000_1900_000_with_camera_labels_185':
+        translation = np.array([-8.743428230285645, -31.42224884033203, 30.81954574584961], dtype=np.float32)
+        quaternion = np.array([0.8754737377166748, 0.4165576100349426, -0.09985091537237167, -0.22373054921627045], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_det_segment-662188686397364823_3248_800_3268_800_with_camera_labels_019':
+        translation = np.array([31.259653091430664, -18.483051300048828, 53.053916931152344], dtype=np.float32)
+        quaternion = np.array([0.9408805966377258, 0.32648780941963196, 0.034090492874383926, 0.08359020948410034], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_det_segment-8956556778987472864_3404_790_3424_790_with_camera_labels_085':
+        translation = np.array([-24.89736557006836, -6.524712562561035, 82.25992584228516], dtype=np.float32)
+        quaternion = np.array([0.9744954705238342, 0.18442603945732117, -0.03375321254134178, -0.12331458181142807], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -728,8 +744,9 @@ def main(args):
         draw_bboxes(
             args.path_bbox,
             face_alpha=0.1,
-            sphere_r=0.15,
-            edge_r=0.05,
+            sphere_r=0.25,
+            edge_r=0.15,
+            iou_threshold=0.1,
         )
 
     # # Make adjustments in case we use the Eevee engine, mostly to
@@ -752,9 +769,13 @@ def main(args):
 
     # Render image and save to disk
     if args.image:
+        if args.path_bbox is not None:
+            bbox_suffix = f"_bbox-{osp.splitext(args.path_bbox)[0].split('_')[-1]}"
+        else:
+            bbox_suffix = ''
         for colorname in [k for k in data.keys() if 'color' in k]:
             print(f"Rendering {colorname}...")
-            bpy.context.scene.render.filepath = f"{path_image}_{colorname}.png"
+            bpy.context.scene.render.filepath = f"{path_image}_{colorname}{bbox_suffix}.png"
             scatter.color = data[colorname]
             bpy.ops.render.render(write_still=True)
             # scatter.base_object.hide_render = True
