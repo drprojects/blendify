@@ -445,6 +445,20 @@ def main(args):
     bpy.context.scene.render.film_transparent = True
 
     # Add camera to the scene (position will be set in the rendering loop)
+    # Tip to position the cameras in the blender GUI:
+    # - navigate the general viewport as you'd like
+    # - select the camera object in the menu on the right in the GUI
+    # - press Ctrl + Alt + Numpad 0 to align the camera with the viewport
+    # - (optional) adjust the viewport or the camera's position
+    # - in the scripting console, recover the camera position by typing:
+    #     ```
+    #     bpy.context.object.location
+    #     bpy.context.object.rotation_quaternion
+    #     ```
+    #     or the one-liner:
+    #     ```
+    #     print([bpy.context.object.location.x, bpy.context.object.location.y, bpy.context.object.location.z]); print([bpy.context.object.rotation_quaternion.w, bpy.context.object.rotation_quaternion.x, # bpy.context.object.rotation_quaternion.y, bpy.context.object.rotation_quaternion.z])
+    #     ```
     camera = scene.set_perspective_camera(resolution=args.resolution, fov_x=np.deg2rad(73), near=0.1, far=1000)
     if args.mode == 'paper_ezsp_dales':
         translation =  np.array([43.99616622924805, 17.057422637939453, 29.741680145263672], dtype=np.float32)
@@ -562,6 +576,30 @@ def main(args):
         translation = np.array([-28.028162002563477, 12.82093334197998, 18.361310958862305], dtype=np.float32)
         quaternion = np.array([0.4304896891117096, 0.252314031124115, -0.4262278079986572, -0.7545503377914429], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_insseg_scene0011_01':
+        translation = np.array([-2.607921600341797, -3.9115700721740723, 4.767398834228516], dtype=np.float32)
+        quaternion = np.array([0.862251341342926, 0.3944227695465088, -0.10950090736150742, -0.29826658964157104], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_insseg_scene0164_00':
+        translation = np.array([0.44784823060035706, 1.346594214439392, 4.8421549797058105], dtype=np.float32)
+        quaternion = np.array([0.6361541152000427, -0.14624781906604767, -0.13321393728256226, -0.7457706332206726], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_insseg_scene0591_02':
+        translation = np.array([0.20522555708885193, 0.7992222905158997, 6.30797004699707], dtype=np.float32)
+        quaternion = np.array([0.096808522939682, -0.03859753534197807, -0.07422225922346115, -0.9917808771133423], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_insseg_scene0621_00':
+        translation = np.array([-0.5188435912132263, 1.7458114624023438, 7.386157989501953], dtype=np.float32)
+        quaternion = np.array([0.18237119913101196, 0.021946880966424942, -0.11573700606822968, -0.9761475920677185], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_insseg_scene0645_01':
+        translation = np.array([-0.4646049439907074, 0.1932399570941925, 9.053607940673828], dtype=np.float32)
+        quaternion = np.array([0.225994274020195, 0.004258096218109131, 0.03415100648999214, 0.9735205173492432], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_scannet_insseg_scene0651_02':
+        translation = np.array([-3.1515419483184814, -1.9629572629928589, 4.700793266296387], dtype=np.float32)
+        quaternion = np.array([0.8152374625205994, 0.3115808665752411, -0.1690923422574997, -0.4579443335533142], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -600,6 +638,8 @@ def main(args):
         bpy.context.object.data.energy = 3.5
         bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
         bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
+    elif args.mode.startswith('paper_litept_scannet_insseg'):
+        bpy.context.object.data.energy = 1.2
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -624,6 +664,8 @@ def main(args):
     elif args.mode.startswith('paper_litept_nuscenes_semseg'):
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode.startswith('paper_litept_waymo_semseg'):
+        bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode.startswith('paper_litept_scannet_insseg'):
         bg.inputs[1].default_value = 0.7  # strength
 
     # Read input data
