@@ -17,6 +17,7 @@ from scipy.interpolate import CubicSpline
 
 from blendify import scene
 from blendify.utils.camera_trajectory import Trajectory
+from blendify.utils.bounding_box import draw_bboxes
 
 
 def adjust_color(color, scale_red=1, scale_saturation=1):
@@ -600,6 +601,14 @@ def main(args):
         translation = np.array([-3.1515419483184814, -1.9629572629928589, 4.700793266296387], dtype=np.float32)
         quaternion = np.array([0.8152374625205994, 0.3115808665752411, -0.1690923422574997, -0.4579443335533142], dtype=np.float32)
         camera.set_position(quaternion=quaternion, translation=translation)
+    elif args.mode == 'paper_litept_waymo_det_segment-13336883034283882790_7100_000_7120_000_with_camera_labels_157':
+        translation = np.array([0, 0, 10], dtype=np.float32)
+        quaternion = np.array([0, 0, 0, 0], dtype=np.float32)
+        camera.set_position(quaternion=quaternion, translation=translation)
+
+
+
+
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -640,6 +649,10 @@ def main(args):
         bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
     elif args.mode.startswith('paper_litept_scannet_insseg'):
         bpy.context.object.data.energy = 1.2
+    elif args.mode.startswith('paper_litept_waymo_det'):
+        bpy.context.object.data.energy = 3.5
+        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
+        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -667,6 +680,8 @@ def main(args):
         bg.inputs[1].default_value = 0.7  # strength
     elif args.mode.startswith('paper_litept_scannet_insseg'):
         bg.inputs[1].default_value = 0.7  # strength
+    elif args.mode.startswith('paper_litept_waymo_det'):
+        bg.inputs[1].default_value = 0.7  # strength
 
     # Read input data
     root = osp.dirname(args.path)
@@ -678,9 +693,10 @@ def main(args):
     for k in sorted(list(data.keys())):
         print(f"{k} : sample: {data[k][0]}")
     pos = data['pos']
-    # pos[:, :2] -= pos[:, :2].mean(dim=0).view(1, -1)
-    pos[:, :2] -= (pos[:, :2].max(dim=0).values + pos[:, :2].min(dim=0).values).view(1, -1) / 2
-    pos[:, 2] -= pos[:, 2].min()
+    if not args.no_centering:
+        # pos[:, :2] -= pos[:, :2].mean(dim=0).view(1, -1)
+        pos[:, :2] -= (pos[:, :2].max(dim=0).values + pos[:, :2].min(dim=0).values).view(1, -1) / 2
+        pos[:, 2] -= pos[:, 2].min()
     point_size = args.voxel
 
     # Prepare the RGB colors to numpy arrays of float32 in [0, 1]
@@ -706,6 +722,15 @@ def main(args):
         scatter.base_object.rotation_euler = np.array([0.0, -0.0, -2.099583387374878], dtype=np.float32)
     elif args.mode == 'paper_ezsp_s3dis_2':
         scatter.base_object.rotation_euler = np.array([0.0, -0.0, -0.4942256808280945], dtype=np.float32)
+
+    # Read and draw bounding boxes
+    if args.path_bbox is not None:
+        draw_bboxes(
+            args.path_bbox,
+            face_alpha=0.1,
+            sphere_r=0.15,
+            edge_r=0.05,
+        )
 
     # # Make adjustments in case we use the Eevee engine, mostly to
     # # avoid light saturation
@@ -900,12 +925,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Blendify example 04: Camera colored PointCloud.")
 
-    # Paths to output files
+    # Paths to input files
     parser.add_argument(
         "-p",
         "--path",
         type=str,
-        help="Path to the input data")
+        help="Path to the input point cloud data")
+    parser.add_argument(
+        "--path_bbox",
+        default=None,
+        type=str,
+        help="Path to the input bbox data")
 
     # Point cloud parameters
     parser.add_argument(
@@ -921,6 +951,10 @@ if __name__ == '__main__':
         "--roughness",
         default=0.2,
         type=float)
+    parser.add_argument(
+        "--no_centering",
+        action='store_true',
+        help="Whether to center the point cloud before rendering")
 
     # Rendering parameters
     parser.add_argument(
