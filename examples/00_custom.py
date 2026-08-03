@@ -3,15 +3,14 @@ warnings.filterwarnings("ignore", message="The value of the smallest subnormal*"
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import argparse
+import json
 import logging
 
 import bpy
 import blender_plots as bplt
 import numpy as np
 import os.path as osp
-import torch
 from videoio import VideoWriter
-import matplotlib.colors as colors
 import subprocess
 from scipy.interpolate import CubicSpline
 
@@ -19,16 +18,15 @@ from blendify import scene
 from blendify.utils.camera_trajectory import Trajectory
 from blendify.utils.bounding_box import draw_bboxes
 
-
-def adjust_color(color, scale_red=1, scale_saturation=1):
-    if scale_red != 1:
-        color[..., 0] *= scale_red
-    if scale_saturation != 1:
-        color = colors.rgb_to_hsv(color)
-        color[..., 1] *= scale_saturation
-        color = colors.hsv_to_rgb(color)
-    color = np.clip(color, 0., 1.)
-    return color
+# Allow running this script from anywhere without installing anything
+import sys
+sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
+from figlib import (load_config, apply_overrides, require, load_point_cloud,
+                    grade, is_neutral, ALPHA_NODE_NAME)
+from figlib.blender_material import (build_grading_chain, apply_grade, read_grade,
+                                     store_layers, DEFAULT_GRADE)
+from figlib.graphs import read_gpkg_graph, align_to_cloud, find_meta_json
+from figlib.blender_graph import build_material, draw_graph
 
 
 class ColorInterpolator:
@@ -407,14 +405,27 @@ def main(args):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("Custom Blendify script for point clouds visualization")
 
+    # Everything about the figure lives in the YAML config; argparse only
+    # carries run-time concerns (which config, image vs video, quick overrides)
+    cfg = apply_overrides(load_config(args.config), args.set)
+    c_data, c_render = cfg["data"], cfg["render"]
+    c_cam, c_sun, c_world = cfg["camera"], cfg["sun"], cfg["world"]
+    c_pc, c_bbox, c_video = cfg["point_cloud"], cfg["bbox"], cfg["video"]
+
+    data_path = args.path or c_data["path"]
+    if data_path is None:
+        raise ValueError(
+            "No input point cloud. Set `data.path` in the config or pass --path.")
+    resolution = tuple(c_render["resolution"])
+
     # # Attach blender file with scene (walls and floor)
     # logger.info("Attaching blend to the scene")
     # scene.attach_blend("./assets/light_box.blend")
 
     # Set the renderer
-    bpy.context.scene.render.engine = args.engine
-    if args.engine == 'BLENDER_EEVEE':
-        bpy.context.scene.eevee.taa_render_samples = args.n_samples  # Temporal Anti-Aliasing
+    bpy.context.scene.render.engine = c_render["engine"]
+    if c_render["engine"] == 'BLENDER_EEVEE':
+        bpy.context.scene.eevee.taa_render_samples = c_render["n_samples"]  # Temporal Anti-Aliasing
         bpy.context.scene.eevee.taa_samples = 8  # default 8, higher = smoother motion
         bpy.context.scene.eevee.use_ssr = True  # enable screen space reflections
         bpy.context.scene.eevee.use_ssr_refraction = True  # if you have transparent/refractive materials
@@ -423,27 +434,27 @@ def main(args):
         bpy.context.scene.eevee.shadow_cascade_size = '1024'
         bpy.context.scene.eevee.use_volumetric_lights = False  # optional, faster
         bpy.context.scene.eevee.use_motion_blur = False  # optional, prevents extra flicker
-    elif args.engine == 'CYCLES':
+    elif c_render["engine"] == 'CYCLES':
         bpy.context.scene.cycles.max_bounces = 30
         bpy.context.scene.cycles.transmission_bounces = 20
         bpy.context.scene.cycles.transparent_max_bounces = 15
         bpy.context.scene.cycles.diffuse_bounces = 10
-        bpy.context.scene.cycles.device = 'GPU'
-        bpy.context.scene.cycles.samples = args.n_samples
+        bpy.context.scene.cycles.device = 'CPU' if c_render["cpu"] else 'GPU'
+        bpy.context.scene.cycles.samples = c_render["n_samples"]
 
     # Resolution
-    bpy.context.scene.render.resolution_x = args.resolution[0]
-    bpy.context.scene.render.resolution_y = args.resolution[1]
+    bpy.context.scene.render.resolution_x = resolution[0]
+    bpy.context.scene.render.resolution_y = resolution[1]
 
     # Color management
-    bpy.context.scene.view_settings.view_transform = 'Standard'  # or 'Filmic'
+    bpy.context.scene.view_settings.view_transform = c_render["view_transform"]
 
     # Output format
     bpy.context.scene.render.image_settings.file_format = 'PNG'
     bpy.context.scene.render.image_settings.color_mode = 'RGBA'
 
     # Transparent background
-    bpy.context.scene.render.film_transparent = True
+    bpy.context.scene.render.film_transparent = c_render["transparent_film"]
 
     # Add camera to the scene (position will be set in the rendering loop)
     # Tip to position the cameras in the blender GUI:
@@ -460,171 +471,14 @@ def main(args):
     #     ```
     #     print([bpy.context.object.location.x, bpy.context.object.location.y, bpy.context.object.location.z]); print([bpy.context.object.rotation_quaternion.w, bpy.context.object.rotation_quaternion.x, # bpy.context.object.rotation_quaternion.y, bpy.context.object.rotation_quaternion.z])
     #     ```
-    camera = scene.set_perspective_camera(resolution=args.resolution, fov_x=np.deg2rad(73), near=0.1, far=1000)
-    if args.mode == 'paper_ezsp_dales':
-        translation =  np.array([43.99616622924805, 17.057422637939453, 29.741680145263672], dtype=np.float32)
-        quaternion = np.array([0.49730759859085083, 0.24891497194766998, 0.3719913959503174, 0.7432017922401428], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_ezsp_kitti360':
-        translation = np.array([-14.493873596191406, -15.842079162597656, 8.457014083862305], dtype=np.float32)
-        quaternion = np.array([0.7844890356063843, 0.5345035195350647, -0.17706048488616943, -0.25987112522125244], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_ezsp_s3dis':
-        translation = np.array([-0.1313309222459793, -7.50628137588501, 3.815814971923828], dtype=np.float32)
-        quaternion = np.array([0.8719961047172546, 0.4894148111343384, -0.00020381153444759548, -0.009800762869417667], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_ezsp_s3dis_2':
-        translation = np.array([-0.12195667624473572, -6.851565361022949, 5.126280784606934], dtype=np.float32)
-        quaternion = np.array([0.9126590490341187, 0.40860432386398315, 0.0006827776087448001, -0.009779075160622597], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_multiscale_resolutions':
-        translation = np.array([-0.730396568775177, -0.17812800407409668, 2.0655770301818848], dtype=np.float32)
-        quaternion = np.array([0.830621063709259, 0.4501716196537018, -0.10737811028957367, -0.3096523582935333], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_semseg_scene0030_00':
-        translation = np.array([0.5710775256156921, 3.436332941055298, 6.617712497711182], dtype=np.float32)
-        quaternion = np.array([0.09742767363786697, 0.026836074888706207, 0.2641966640949249, 0.9591599702835083], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_semseg_scene0169_00':
-        translation = np.array([-1.2411928176879883, -2.975771188735962, 6.083170413970947], dtype=np.float32)
-        quaternion = np.array([0.9348678588867188, 0.274120569229126, -0.05881626531481743, -0.21776331961154938], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_semseg_scene0378_02':
-        translation = np.array([0.6095614433288574, 0.890741229057312, 5.776294231414795], dtype=np.float32)
-        quaternion = np.array([0.214557945728302, 0.022599322721362114, 0.11913300305604935, 0.9691550135612488], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_semseg_scene0406_02':
-        translation = np.array([-0.9438729286193848, 0.38966935873031616, 3.5319409370422363], dtype=np.float32)
-        quaternion = np.array([0.10252528637647629, 0.02483103796839714, 0.19308218359947205, 0.975495457649231], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_semseg_scene0645_01':
-        translation = np.array([0.8784829378128052, 0.3396054804325104, 8.742258071899414], dtype=np.float32)
-        quaternion = np.array([0.21838167309761047, 0.0794510766863823, 0.057358015328645706, 0.9709311127662659], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_semseg_scene0651_00':
-        translation = np.array([-0.6995250582695007, -0.2804234027862549, 4.767136096954346], dtype=np.float32)
-        quaternion = np.array([0.9844140410423279, 0.09081237763166428, -0.027085987851023674, -0.1481495052576065], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_stru3d_semseg_scene_03022_room_8765':
-        translation = np.array([-0.3661176860332489, -0.011110145598649979, 5.475278854370117], dtype=np.float32)
-        quaternion = np.array([0.702695906162262, 0.034513816237449646, -0.028601357713341713, -0.7100768685340881], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_stru3d_semseg_scene_03034_room_401':
-        translation = np.array([1.1356086730957031, -1.1455254554748535, 8.321700096130371], dtype=np.float32)
-        quaternion = np.array([0.9960197806358337, 0.0889928862452507, 0.004876633174717426, -0.0010398455196991563], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_stru3d_semseg_scene_03113_room_560':
-        translation = np.array([-0.536615252494812, 1.0438051223754883, 5.901821613311768], dtype=np.float32)
-        quaternion = np.array([0.001395018887706101, -0.0036766876000910997, 0.11427392065525055, 0.9934415221214294], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_stru3d_semseg_scene_03195_room_1764':
-        translation = np.array([0.7700258493423462, 0.011294008232653141, 4.823118209838867], dtype=np.float32)
-        quaternion = np.array([0.7043673992156982, 0.07746528834104538, 0.08040645718574524, 0.7009996771812439], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_stru3d_semseg_scene_03223_room_4894':
-        translation = np.array([-0.10034395009279251, -0.057335224002599716, 4.6524505615234375], dtype=np.float32)
-        quaternion = np.array([0.9999446272850037, 0.009804977104067802, 0.0036866941954940557, -0.0010302967857569456], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_stru3d_semseg_scene_03237_room_2846':
-        translation = np.array([0.3447108864784241, 0.03353601321578026, 4.648366451263428], dtype=np.float32)
-        quaternion = np.array([0.7067402601242065, 0.038907717913389206, 0.04402199387550354, 0.7050294876098633], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_nuscenes_semseg_049d115cb992491b8de81f45e9ecc803':
-        translation = np.array([-1.6669714450836182, 26.397863388061523, 17.029747009277344], dtype=np.float32)
-        quaternion = np.array([0.041050706058740616, 0.026643119752407074, -0.5437620282173157, -0.8378113508224487], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_nuscenes_semseg_1ccdbec944bd4994b91aa3d0af8d285c':
-        translation = np.array([13.539493560791016, -31.683805465698242, 18.330381393432617], dtype=np.float32)
-        quaternion = np.array([0.8217780590057373, 0.555506706237793, 0.07675204426050186, 0.10100644081830978], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_nuscenes_semseg_2f678cb1e67d42ae9a04401f9cc1e6be':
-        translation = np.array([29.993968963623047, -11.73816204071045, 13.352730751037598], dtype=np.float32)
-        quaternion = np.array([0.6480386257171631, 0.4415041506290436, 0.3566734492778778, 0.5078426003456116], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_nuscenes_semseg_5f8393250fae4960b501cb6055614547':
-        translation = np.array([9.246944427490234, 48.104496002197266, 20.54415512084961], dtype=np.float32)
-        quaternion = np.array([0.12811481952667236, 0.06082574278116226, 0.465190052986145, 0.873776376247406], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_nuscenes_semseg_6bfd64d0778842288608be82d7e36371':
-        translation = np.array([-27.46445655822754, 18.978410720825195, 37.58072280883789], dtype=np.float32)
-        quaternion = np.array([0.5536229014396667, 0.19715970754623413, -0.27144017815589905, -0.7622007727622986], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_nuscenes_semseg_8f78c446a68d4854bfb7cdfa1c7097d2':
-        translation = np.array([-9.895901679992676, 15.226813316345215, 19.999162673950195], dtype=np.float32)
-        quaternion = np.array([0.19350597262382507, 0.11946077644824982, 0.5357224345207214, 0.813194990158081], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_semseg_segment-11037651371539287009_77_670_97_670_with_camera_labels_1507944303393935':
-        translation = np.array([-24.74045181274414, -1.8987843990325928, 17.814373016357422], dtype=np.float32)
-        quaternion = np.array([0.6321805715560913, 0.3547615110874176, -0.3300589323043823, -0.6046100854873657], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_semseg_segment-18252111882875503115_378_471_398_471_with_camera_labels_1509125955575722':
-        translation = np.array([-32.836299896240234, 30.25058937072754, 21.363615036010742], dtype=np.float32)
-        quaternion = np.array([0.3692755401134491, 0.20747537910938263, -0.4307706356048584, -0.7968853116035461], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_semseg_segment-18333922070582247333_320_280_340_280_with_camera_labels_1507326323829964':
-        translation = np.array([-53.11225509643555, 2.3480372428894043, 18.724817276000977], dtype=np.float32)
-        quaternion = np.array([0.599420428276062, 0.36403462290763855, -0.3615887463092804, -0.6143513321876526], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_semseg_segment-3077229433993844199_1080_000_1100_000_with_camera_labels_1553271550525306':
-        translation = np.array([8.384597778320312, -15.586426734924316, 44.270565032958984], dtype=np.float32)
-        quaternion = np.array([0.9985811114311218, 0.027893105521798134, 0.0012666245456784964, 0.04534531012177467], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_semseg_segment-8956556778987472864_3404_790_3424_790_with_camera_labels_1513450837409246':
-        translation = np.array([6.465387344360352, 10.621289253234863, 26.19098663330078], dtype=np.float32)
-        quaternion = np.array([0.051066912710666656, 0.013404211029410362, 0.34771621227264404, 0.9361121654510498], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_semseg_segment-9041488218266405018_6454_030_6474_030_with_camera_labels_1508979405218294':
-        translation = np.array([-28.028162002563477, 12.82093334197998, 18.361310958862305], dtype=np.float32)
-        quaternion = np.array([0.4304896891117096, 0.252314031124115, -0.4262278079986572, -0.7545503377914429], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_insseg_scene0011_01':
-        translation = np.array([-2.607921600341797, -3.9115700721740723, 4.767398834228516], dtype=np.float32)
-        quaternion = np.array([0.862251341342926, 0.3944227695465088, -0.10950090736150742, -0.29826658964157104], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_insseg_scene0164_00':
-        translation = np.array([0.44784823060035706, 1.346594214439392, 4.8421549797058105], dtype=np.float32)
-        quaternion = np.array([0.6361541152000427, -0.14624781906604767, -0.13321393728256226, -0.7457706332206726], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_insseg_scene0591_02':
-        translation = np.array([0.20522555708885193, 0.7992222905158997, 6.30797004699707], dtype=np.float32)
-        quaternion = np.array([0.096808522939682, -0.03859753534197807, -0.07422225922346115, -0.9917808771133423], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_insseg_scene0621_00':
-        translation = np.array([-0.5188435912132263, 1.7458114624023438, 7.386157989501953], dtype=np.float32)
-        quaternion = np.array([0.18237119913101196, 0.021946880966424942, -0.11573700606822968, -0.9761475920677185], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_insseg_scene0645_01':
-        translation = np.array([-0.4646049439907074, 0.1932399570941925, 9.053607940673828], dtype=np.float32)
-        quaternion = np.array([0.225994274020195, 0.004258096218109131, 0.03415100648999214, 0.9735205173492432], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_scannet_insseg_scene0651_02':
-        translation = np.array([-3.1515419483184814, -1.9629572629928589, 4.700793266296387], dtype=np.float32)
-        quaternion = np.array([0.8152374625205994, 0.3115808665752411, -0.1690923422574997, -0.4579443335533142], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_det_segment-13336883034283882790_7100_000_7120_000_with_camera_labels_157':
-        translation = np.array([42.82041931152344, 4.8843674659729, 6.764627456665039], dtype=np.float32)
-        quaternion = np.array([0.6482436060905457, 0.41732335090637207, 0.35241055488586426, 0.5304980874061584], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_det_segment-13356997604177841771_3360_000_3380_000_with_camera_labels_002':
-        translation = np.array([-23.578227996826172, 45.050628662109375, 64.74434661865234], dtype=np.float32)
-        quaternion = np.array([0.004924893379211426, 0.0061909714713692665, -0.262095183134079, -0.9650095701217651], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_det_segment-14300007604205869133_1160_000_1180_000_with_camera_labels_149':
-        translation = np.array([34.866790771484375, -17.64608383178711, 16.711875915527344], dtype=np.float32)
-        quaternion = np.array([0.8245905041694641, 0.41970524191856384, 0.17838475108146667, 0.33477896451950073], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_det_segment-30779396576054160_1880_000_1900_000_with_camera_labels_185':
-        translation = np.array([-8.743428230285645, -31.42224884033203, 30.81954574584961], dtype=np.float32)
-        quaternion = np.array([0.8754737377166748, 0.4165576100349426, -0.09985091537237167, -0.22373054921627045], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_det_segment-662188686397364823_3248_800_3268_800_with_camera_labels_019':
-        translation = np.array([31.259653091430664, -18.483051300048828, 53.053916931152344], dtype=np.float32)
-        quaternion = np.array([0.9408805966377258, 0.32648780941963196, 0.034090492874383926, 0.08359020948410034], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
-    elif args.mode == 'paper_litept_waymo_det_segment-8956556778987472864_3404_790_3424_790_with_camera_labels_085':
-        translation = np.array([-24.89736557006836, -6.524712562561035, 82.25992584228516], dtype=np.float32)
-        quaternion = np.array([0.9744954705238342, 0.18442603945732117, -0.03375321254134178, -0.12331458181142807], dtype=np.float32)
-        camera.set_position(quaternion=quaternion, translation=translation)
+    camera = scene.set_perspective_camera(
+        resolution=resolution,
+        fov_x=np.deg2rad(c_cam["fov_x_deg"]),
+        near=c_cam["near"],
+        far=c_cam["far"])
+    camera.set_position(
+        quaternion=np.asarray(c_cam["quaternion"], dtype=np.float32),
+        translation=np.asarray(c_cam["translation"], dtype=np.float32))
 
     # Set it as the active camera
     bpy.context.scene.camera = camera.blender_camera
@@ -635,40 +489,17 @@ def main(args):
     # scene.lights.add_point(quaternion=(0.571, 0.169, 0.272, 0.756), translation=(0.0, -21, 7.0), strength=10000)
 
     # Configure the sun
-    bpy.ops.object.light_add(type="SUN", radius=1, align="WORLD", location=[0, 0, 5], rotation=[1, 0, 2], scale=[1, 1, 1])
-    bpy.context.object.data.energy = 1
-    if args.mode == 'paper_ezsp_dales':
-        bpy.context.object.data.energy = 5
-        bpy.context.object.data.color = (1, 0.581614, 0.316125)  # sunset-ish color
-        bpy.context.object.rotation_euler = np.array([-1.0471975803375244, 0.0, 0.1745329201221466],dtype=np.float32)
-    elif args.mode == 'paper_ezsp_kitti360':
-        bpy.context.object.data.energy = 3.5
-        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
-        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
-    elif args.mode == 'paper_ezsp_s3dis':
-        bpy.context.object.data.energy = 2.2
-        bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
-    elif args.mode == 'paper_ezsp_s3dis_2':
-        bpy.context.object.data.energy = 2.2
-        bpy.context.object.rotation_euler = np.array([0.1745329201221466, 0.0, -0.7853981852531433], dtype=np.float32)
-    elif args.mode.startswith('paper_litept_scannet_semseg'):
-        bpy.context.object.data.energy = 1.5
-    elif args.mode.startswith('paper_litept_stru3d_semseg'):
-        bpy.context.object.data.energy = 1.5
-    elif args.mode.startswith('paper_litept_nuscenes_semseg'):
-        bpy.context.object.data.energy = 3.5
-        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
-        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
-    elif args.mode.startswith('paper_litept_waymo_semseg'):
-        bpy.context.object.data.energy = 3.5
-        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
-        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
-    elif args.mode.startswith('paper_litept_scannet_insseg'):
-        bpy.context.object.data.energy = 1.2
-    elif args.mode.startswith('paper_litept_waymo_det'):
-        bpy.context.object.data.energy = 3.5
-        bpy.context.object.data.color = (1.0, 0.8358416557312012, 0.8358416557312012)
-        bpy.context.object.rotation_euler = np.array([0.6981316804885864, 0.0, 0.7853981852531433], dtype=np.float32)
+    bpy.ops.object.light_add(
+        type="SUN",
+        radius=1,
+        align="WORLD",
+        location=c_sun["location"],
+        rotation=c_sun["rotation_euler"],
+        scale=[1, 1, 1])
+    bpy.context.object.data.energy = c_sun["energy"]
+    bpy.context.object.data.color = tuple(c_sun["color"])
+    bpy.context.object.rotation_euler = np.asarray(
+        c_sun["rotation_euler"], dtype=np.float32)
 
     # Configure world lighting
     world = bpy.context.scene.world
@@ -676,77 +507,206 @@ def main(args):
     bg = world.node_tree.nodes.get("Background")
     if bg is None:
         bg = world.node_tree.nodes.new("ShaderNodeBackground")
-    bg.inputs[0].default_value = (1, 0.934681, 0.78918, 1)  # color
-    bg.inputs[1].default_value = 1.3  # strength
-    if args.mode == 'paper_ezsp_dales':
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode == 'paper_ezsp_kitti360':
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode == 'paper_ezsp_s3dis':
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode == 'paper_ezsp_s3dis_2':
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode.startswith('paper_litept_scannet_semseg'):
-        bg.inputs[1].default_value = 0.9  # strength
-    elif args.mode.startswith('paper_litept_stru3d_semseg'):
-        bg.inputs[1].default_value = 1.2  # strength
-    elif args.mode.startswith('paper_litept_nuscenes_semseg'):
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode.startswith('paper_litept_waymo_semseg'):
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode.startswith('paper_litept_scannet_insseg'):
-        bg.inputs[1].default_value = 0.7  # strength
-    elif args.mode.startswith('paper_litept_waymo_det'):
-        bg.inputs[1].default_value = 0.7  # strength
+    bg.inputs[0].default_value = tuple(c_world["color"]) + (1,)  # color
+    bg.inputs[1].default_value = c_world["strength"]  # strength
 
-    # Read input data
-    root = osp.dirname(args.path)
-    filename = osp.splitext(osp.basename(args.path))[0]
-    path_blender = osp.join(root, filename + '.blender')
+    # Read input data. Any supported format lands in the same PointCloud object
+    root = osp.dirname(data_path)
+    filename = osp.basename(data_path).split(".")[0]
+    path_blender = osp.join(root, filename + '.blend')
     path_image = osp.join(root, filename)
-    data = torch.load(args.path)
-    print(f"Read data. Available attributes:")
-    for k in sorted(list(data.keys())):
-        print(f"{k} : sample: {data[k][0]}")
-    pos = data['pos']
-    if not args.no_centering:
-        # pos[:, :2] -= pos[:, :2].mean(dim=0).view(1, -1)
-        pos[:, :2] -= (pos[:, :2].max(dim=0).values + pos[:, :2].min(dim=0).values).view(1, -1) / 2
-        pos[:, 2] -= pos[:, 2].min()
-    point_size = args.voxel
 
-    # Prepare the RGB colors to numpy arrays of float32 in [0, 1]
-    for colorname in [k for k in data.keys() if 'color' in k]:
-        if data[colorname].dtype == np.dtype('<U18'):
-            data[colorname] = np.array([
-                [int(c) for c in rgb.replace('rgb(', '').replace(')', '').split(', ')]
-                for rgb in data[colorname]])
-        data[colorname] = np.asarray(data[colorname]).astype('float32') / 255.
-        data[colorname] = adjust_color(data[colorname])
+    cloud = load_point_cloud(
+        data_path,
+        palettes=c_data["palettes"],
+        palette_overrides=c_data["palette_overrides"],
+        colors=c_data["colors"],
+        cache=c_data["cache"],
+        cache_dir=c_data["cache_dir"],
+        log=logger.info)
+    cloud.drop_void(c_data["drop_void"], log=logger.info)
+    if c_data["center"]:
+        cloud.center()
+    cloud.subsample(c_data["subsample"], seed=c_data["seed"])
+    if c_data["add_xyz"]:
+        cloud.add_xyz_colorization()
+    logger.info(cloud.summary())
+    point_size = c_data["voxel"]
+
+    # Blender wants float RGB in [0, 1]
+    colorizations = {name: value.astype(np.float32) / 255.
+                     for name, value in cloud.colors.items()}
+
+    # Grading no longer touches the colour arrays. Each layer carries a grading
+    # entry which is pushed into the shader nodes when that layer is rendered,
+    # so the same numbers drive a CLI render and a live GUI slider, and can be
+    # read back out of a saved .blend. White balance is the exception: it stays
+    # baked, being a rare per-channel fix rather than something to scrub.
+    c_color = cfg["color"]
+    base_grade = {
+        "saturation": c_color["saturation"],
+        "contrast": c_color["contrast"],
+        "brightness": c_color.get("brightness", 0.0),
+        "exposure": c_color["exposure"],
+        "gamma": c_color["gamma"],
+    }
+    graded_layers = set(c_color["apply_to"] or [])
+
+    layer_grades = {}
+    for name in colorizations:
+        entry = dict(DEFAULT_GRADE)
+        entry["attribute"] = f"color_{name}"
+        if name in graded_layers:
+            entry.update(base_grade)
+        layer_grades[name] = entry
+
+    if c_color["white_balance"]:
+        for name in graded_layers:
+            if name in colorizations:
+                colorizations[name] = grade(
+                    colorizations[name], white_balance=c_color["white_balance"])
+        logger.info(f"Baked white balance {c_color['white_balance']}")
+
+    # A variant is the same source colours under a different grading preset, so
+    # it needs no colour array of its own — just its own entry pointing at the
+    # source layer's attribute.
+    for variant in c_color["variants"] or []:
+        source = variant.get("from", "rgb")
+        if source not in colorizations:
+            # Variants are usually declared dataset-wide, so a figure that
+            # restricts `data.colors` may not have loaded the source layer.
+            # That is not an error — just skip the variant.
+            logger.info(
+                f"Skipping colour variant {variant.get('name')!r}: source "
+                f"{source!r} not loaded (data.colors restricts to "
+                f"{sorted(colorizations)})")
+            continue
+        entry = dict(layer_grades[source])
+        entry["attribute"] = f"color_{source}"
+        for key in ("saturation", "contrast", "brightness", "exposure", "gamma", "alpha"):
+            if variant.get(key) is not None:
+                entry[key] = variant[key]
+        layer_grades[variant["name"]] = entry
+        logger.info(f"Colour variant {variant['name']!r} from {source!r}: "
+                    f"saturation={entry['saturation']}, alpha={entry['alpha']}")
+
+    # Per-layer opacity lives in the grading entry too, so switching layer in
+    # the GUI switches opacity with it.
+    for name, value in (c_pc["layer_alpha"] or {}).items():
+        if name in layer_grades:
+            layer_grades[name]["alpha"] = value
+    for name in colorizations:
+        if name not in (c_pc["layer_alpha"] or {}):
+            layer_grades[name].setdefault("alpha", float(c_pc["alpha"]))
+
+    # Unannotated points (Void / N-A) are shown so the geometry stays complete,
+    # but they carry no label and no metrics, so they must not compete for
+    # attention: recolour them neutral and fade them. This IS baked, because it
+    # is per-point rather than per-layer. The scatter material wires the colour
+    # attribute's alpha into the BSDF, so handing it RGBA is enough.
+    c_void = cfg["void"]
+    for name, rgb in colorizations.items():
+        alpha = np.ones((len(rgb), 1), dtype=np.float32)
+        mask = cloud.void.get(name)
+        if mask is not None and mask.any():
+            rgb = rgb.copy()
+            if c_void["color"] is not None:
+                rgb[mask] = np.asarray(c_void["color"], dtype=np.float32)
+            alpha[mask] = float(c_void["alpha"])
+            logger.info(
+                f"{name}: {int(mask.sum())} void points muted "
+                f"(colour={c_void['color']}, alpha={c_void['alpha']})")
+        colorizations[name] = np.concatenate([rgb, alpha], axis=1)
 
     # Create the Scatter object holding the point cloud
-    default_colorname = f"{args.default_color}_colors"
+    default_colorname = c_data["default_color"]
+    if default_colorname not in colorizations:
+        raise KeyError(
+            f"data.default_color={default_colorname!r} is not in {data_path}. "
+            f"Available: {sorted(colorizations)}")
     scatter = bplt.Scatter(
-        pos.numpy(),
-        color=data[default_colorname],
-        marker_type="spheres",
+        cloud.pos,
+        color=colorizations[default_colorname],
+        marker_type=c_pc["marker_type"],
         name=f"point_cloud_{default_colorname}",
         radius=point_size)
-    scatter.color_material.node_tree.nodes["Principled BSDF"].inputs[7].default_value = args.specularity
-    scatter.color_material.node_tree.nodes["Principled BSDF"].inputs[9].default_value = args.roughness
-    if args.mode == 'paper_ezsp_dales':
-        scatter.base_object.rotation_euler = np.array([0.0, -0.0, -2.099583387374878], dtype=np.float32)
-    elif args.mode == 'paper_ezsp_s3dis_2':
-        scatter.base_object.rotation_euler = np.array([0.0, -0.0, -0.4942256808280945], dtype=np.float32)
+    bsdf = scatter.color_material.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs[7].default_value = c_pc["specularity"]
+    bsdf.inputs[9].default_value = c_pc["roughness"]
+
+    # Grading lives in named shader nodes rather than in the colour arrays, so
+    # it is live-tweakable in the GUI and readable back out of a saved .blend.
+    # blender_plots builds a NEW material on every `scatter.color = ...`, which
+    # would orphan the grading chain. Hold on to the first one and keep it as
+    # the mesh's only material.
+    cloud_material = scatter.color_material
+    build_grading_chain(cloud_material)
+    apply_grade(cloud_material, layer_grades[default_colorname])
+
+    def show_layer(colors, grade_entry):
+        """Assign a colour array and its grading, keeping our material."""
+        scatter.color = colors
+        mesh = scatter.base_object.data
+        if list(mesh.materials) != [cloud_material]:
+            mesh.materials.clear()
+            mesh.materials.append(cloud_material)
+        # `scatter.color` writes into `marker_color`, so the shader must read
+        # that here rather than the per-layer attribute used in exports
+        apply_grade(cloud_material, grade_entry, attribute_name="marker_color")
+
+    scatter.base_object.rotation_euler = np.asarray(
+        c_pc["rotation_euler"], dtype=np.float32)
+
+    # Draw network graphs, aligned to the cloud and floating on one plane
+    c_graphs = cfg["graphs"]
+    if c_graphs["items"]:
+        translation = c_graphs["coord_translation"]
+        if translation == "auto":
+            meta_path = find_meta_json(data_path)
+            if meta_path is None:
+                raise ValueError(
+                    f"graphs.coord_translation is 'auto' but no <roi>_meta.json "
+                    f"sits next to {data_path}. Set it explicitly in the config.")
+            with open(meta_path) as f:
+                translation = json.load(f)["coord_translation"]
+            logger.info(f"Graph alignment: coord_translation from "
+                        f"{osp.basename(meta_path)} = {translation}")
+
+        for item in c_graphs["items"]:
+            item = {"path": item} if isinstance(item, str) else dict(item)
+            graph = read_gpkg_graph(item["path"])
+            aligned = align_to_cloud(
+                graph,
+                coord_translation=translation,
+                offset=cloud.offset,
+                height=0.0)   # height is an object transform, applied below
+            material = build_material(
+                name=item.get("name", graph["name"]),
+                color=item.get("color", c_graphs["color"]),
+                alpha=item.get("alpha", c_graphs["alpha"]),
+                emission=item.get("emission", c_graphs["emission"]),
+                roughness=item.get("roughness", c_graphs["roughness"]))
+            draw_graph(
+                aligned,
+                material,
+                radius=item.get("radius", c_graphs["radius"]),
+                node_radius=item.get("node_radius", c_graphs["node_radius"]),
+                name=item.get("name", graph["name"]),
+                height=item.get("height", c_graphs["height"]))
+            logger.info(
+                f"Drew graph {graph['name']} "
+                f"({len(aligned['edges'])} edges, {len(aligned['nodes'])} nodes) "
+                f"at z={item.get('height', c_graphs['height'])}")
 
     # Read and draw bounding boxes
-    if args.path_bbox is not None:
+    bbox_path = args.path_bbox or c_bbox["path"]
+    if bbox_path is not None:
         draw_bboxes(
-            args.path_bbox,
-            face_alpha=0.1,
-            sphere_r=0.25,
-            edge_r=0.15,
-            iou_threshold=0.1,
+            bbox_path,
+            face_alpha=c_bbox["face_alpha"],
+            sphere_r=c_bbox["sphere_r"],
+            edge_r=c_bbox["edge_r"],
+            iou_threshold=c_bbox["iou_threshold"],
         )
 
     # # Make adjustments in case we use the Eevee engine, mostly to
@@ -769,84 +729,60 @@ def main(args):
 
     # Render image and save to disk
     if args.image:
-        if args.path_bbox is not None:
-            bbox_suffix = f"_bbox-{osp.splitext(args.path_bbox)[0].split('_')[-1]}"
+        if bbox_path is not None:
+            bbox_suffix = f"_bbox-{osp.splitext(bbox_path)[0].split('_')[-1]}"
         else:
             bbox_suffix = ''
-        for colorname in [k for k in data.keys() if 'color' in k]:
-            print(f"Rendering {colorname}...")
-            bpy.context.scene.render.filepath = f"{path_image}_{colorname}{bbox_suffix}.png"
-            scatter.color = data[colorname]
+        for layername, entry in layer_grades.items():
+            source = entry["attribute"].replace("color_", "", 1)
+            print(f"Rendering {layername}...")
+            bpy.context.scene.render.filepath = f"{path_image}_{layername}{bbox_suffix}.png"
+            show_layer(colorizations[source], entry)
             bpy.ops.render.render(write_still=True)
-            # scatter.base_object.hide_render = True
-            # bpy.data.objects.remove(scatter.base_object, do_unlink=True)
-            logger.info(f"Rendering of {colorname} complete")
+            logger.info(f"Rendering of {layername} complete")
 
     if args.video:
         # Build the camera trajectory
         logger.info("Creating camera and interpolating its trajectory")
-        if args.mode == 'paper_ezsp_dales':
-            start_position = np.array([0, 0, 30], dtype=np.float32)
-            start_target = np.array([0, 40, 0], dtype=np.float32)
-            spiral_target = start_position
-            spin_spiral_ratio = 0.4
-            spin_angle = np.pi / 2
-            spiral_angle = 2 * np.pi
-            z_max = 150
-            r_max = 150
-        elif args.mode == 'paper_ezsp_kitti360':
-            start_position = np.array([-36, 38, 5], dtype=np.float32)
-            start_target = np.array([-65, 20, 2], dtype=np.float32)
-            spiral_target = np.array([3, 4, 4.5], dtype=np.float32)
-            spin_spiral_ratio = 0.8
-            spin_angle = 2 * np.pi / 3
-            spiral_angle = np.pi / 2
-            z_max = 75
-            r_max = 150
-        elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
-            start_position = np.array([0, 3, 1.7], dtype=np.float32)
-            start_target = np.array([5, 0, 1.4], dtype=np.float32)
-            spiral_target = start_position
-            spin_spiral_ratio = 0.5
-            spin_angle = np.pi
-            spiral_angle = 3 * np.pi
-            z_max = 50
-            r_max = 50
+        require(
+            cfg,
+            "video",
+            ["start_position", "start_target", "spiral_target",
+             "spin_spiral_ratio", "spin_angle", "spiral_angle", "z_max", "r_max"],
+            "--video")
+        start_position = np.asarray(c_video["start_position"], dtype=np.float32)
+        start_target = np.asarray(c_video["start_target"], dtype=np.float32)
+        spiral_target = np.asarray(c_video["spiral_target"], dtype=np.float32)
+        spin_spiral_ratio = c_video["spin_spiral_ratio"]
+        spin_angle = c_video["spin_angle"]
+        spiral_angle = c_video["spiral_angle"]
+        z_max = c_video["z_max"]
+        r_max = c_video["r_max"]
         start_quaternion = look_at_quaternion(start_position, start_target)
-        spin_duration = args.duration * spin_spiral_ratio
-        spiral_duration = args.duration - spin_duration
+        duration, fps = c_video["duration"], c_video["fps"]
+        spin_duration = duration * spin_spiral_ratio
+        spiral_duration = duration - spin_duration
         spin_poses = spin_around_trajectory(
             start_position,
             start_quaternion,
-            fps=args.fps,
+            fps=fps,
             duration=spin_duration,
             angular_speed=spin_angle / spin_duration)
 
-        # Dirty overwrite of the "spin" trajectory by a "path"
-        # trajectory for KITTI360
-        if args.mode == 'paper_ezsp_kitti360':
+        # A figure may replace the "spin" phase with a scripted flythrough;
+        # keypoints are spread evenly over the spin duration
+        if c_video["path_keypoints"] is not None:
+            keypoints = c_video["path_keypoints"]
             spin_poses = path_trajectory(
-                [
-                    0 * spin_duration / 4,
-                    1 * spin_duration / 4,
-                    2 * spin_duration / 4,
-                    3 * spin_duration / 4,
-                    4 * spin_duration / 4,
-                ],
-                [
-                    [-66, 10, 4.5],
-                    [-47, 28, 4.5],
-                    [-37, 36, 4.5],
-                    [-30, 32, 4.5],
-                    [3, 4, 4.5],
-                ],
-                fps=args.fps)
+                np.linspace(0, spin_duration, len(keypoints)),
+                keypoints,
+                fps=fps)
 
         spiral_poses = spiral_camera_trajectory(
             spin_poses[list(spin_poses.keys())[-1]][0],
             spin_poses[list(spin_poses.keys())[-1]][1],
             spiral_target,
-            fps=args.fps,
+            fps=fps,
             duration=spiral_duration,
             angular_speed=spiral_angle / spiral_duration,
             z_speed=z_max / spiral_duration,
@@ -861,27 +797,16 @@ def main(args):
                 position=translation,
                 time=time)
         camera_trajectory = camera_trajectory.refine_trajectory(
-            time_step=1 / args.fps,
-            smoothness=5.0)
+            time_step=1 / fps,
+            smoothness=c_video["smoothness"])
 
-        # Create a color interpolator
-        if args.mode == 'paper_ezsp_dales':
-            color_times = [
-                ['intensity', 0],
-                ['0_level', spin_duration / 2],
-                ['pred', 2 * spin_duration]]
-        elif args.mode == 'paper_ezsp_kitti360':
-            color_times = [
-                ['rgb', 0],
-                ['0_level', spin_duration / 2],
-                ['pred', spin_duration]]
-        elif args.mode in ['paper_ezsp_s3dis', 'paper_ezsp_s3dis_2']:
-            color_times = [
-                ['rgb', 0],
-                ['0_level', spin_duration / 2],
-                ['pred', 3 * spin_duration / 2]]
+        # Create a color interpolator. `color_times` entries are
+        # [color_key, factor], where the fade-in time is factor * spin_duration
+        require(cfg, "video", ["color_times"], "--video")
+        color_times = [
+            [key, factor * spin_duration] for key, factor in c_video["color_times"]]
         color_interpolator = ColorInterpolator(
-            [data[f'{ct[0]}_colors'] for ct in color_times],
+            [colorizations[ct[0]] for ct in color_times],
             [ct[1] for ct in color_times],
             fade_duration=1)
 
@@ -889,18 +814,18 @@ def main(args):
         total_frames = len(camera_trajectory)
         video_path = (
             f"{path_image}"
-            f"_engine-{args.engine}"
-            f"_fps-{args.fps}"
-            f"_resolution-{args.resolution[0]}-{args.resolution[1]}"
-            f"_duration-{args.duration}"
-            f"_specularity-{args.specularity}"
-            f"_roughness-{args.roughness}"
-            f"_n_samples-{args.n_samples}"
+            f"_engine-{c_render['engine']}"
+            f"_fps-{fps}"
+            f"_resolution-{resolution[0]}-{resolution[1]}"
+            f"_duration-{duration}"
+            f"_specularity-{c_pc['specularity']}"
+            f"_roughness-{c_pc['roughness']}"
+            f"_n_samples-{c_render['n_samples']}"
             f".mp4")
         with VideoWriter(
                 video_path,
-                resolution=args.resolution,
-                fps=args.fps) as vw:
+                resolution=resolution,
+                fps=fps) as vw:
             for index, position in enumerate(camera_trajectory):
                 logger.info(f"Rendering frame {index:03d} / {total_frames:03d}")
 
@@ -910,14 +835,14 @@ def main(args):
                     translation=position["position"])
 
                 # Update the point colors at the current time step
-                t = index / total_frames * args.duration
+                t = index / total_frames * duration
                 color = color_interpolator.get_color(t)
-                scatter.color = color
+                show_layer(color, layer_grades[default_colorname])
 
                 # Render the scene to temporary image
                 img = scene.render(
-                    use_gpu=not args.cpu,
-                    samples=args.n_samples)
+                    use_gpu=not c_render["cpu"],
+                    samples=c_render["n_samples"])
 
                 # Read the resulting frame back
                 # Frames have transparent background; perform an
@@ -932,120 +857,107 @@ def main(args):
         compress_mp4(
             video_path,
             f"{osp.splitext(video_path)[0]}_compressed.mp4",
-            crf=28,
-            preset="slow",
-            codec="libx264")
+            crf=c_video["crf"],
+            preset=c_video["preset"],
+            codec=c_video["codec"])
         logger.info("Compressing complete")
 
     # Optionally save blend file with the scene at frame 0
     if args.export:
+        # Store every colorization as an extra colour attribute on the SAME
+        # mesh. This costs one float4 per point per layer and nothing else —
+        # the positions and, crucially, the geometry-nodes sphere instancing
+        # are shared. Separate objects per layer would duplicate both and make
+        # the viewport crawl.
+        if cfg["export"]["all_layers"]:
+            mesh = scatter.base_object.data
+            existing = {a.name for a in mesh.color_attributes}
+            for name, color in colorizations.items():
+                attr_name = f"color_{name}"
+                if attr_name in existing:
+                    continue
+                attribute = mesh.color_attributes.new(
+                    name=attr_name, type='FLOAT_COLOR', domain='POINT')
+                rgba = color if color.shape[1] == 4 else np.concatenate(
+                    [color, np.ones((len(color), 1), dtype=np.float32)], axis=1)
+                attribute.data.foreach_set("color", np.ascontiguousarray(rgba).ravel())
+            store_layers(scatter.base_object, layer_grades)
+            scatter.base_object["figure_active_layer"] = default_colorname
+            apply_grade(scatter.color_material, layer_grades[default_colorname])
+            logger.info(
+                f"Stored {len(layer_grades)} layers "
+                f"({', '.join(layer_grades)}) with their grading")
+            logger.info(
+                f"Stored {len(colorizations)} colour attributes on the mesh: "
+                f"{', '.join('color_' + n for n in colorizations)}")
+            logger.info(
+                "To switch layer in the GUI: select the point cloud object, "
+                "Material Properties -> `color` -> Attribute node -> set Name "
+                "to one of the above (currently 'marker_color').")
+
+        # Embed the layer-switcher panel so it is already loaded in the .blend's
+        # Scripting tab — the user presses Run Script rather than hunting for a
+        # file. Not auto-run: that would trip Blender's script security prompt.
+        switcher = osp.join(
+            osp.dirname(osp.dirname(osp.abspath(__file__))),
+            "scripts", "blender_layer_switcher.py")
+        if osp.exists(switcher):
+            text_name = "figure_panel.py"
+            if text_name in bpy.data.texts:
+                bpy.data.texts.remove(bpy.data.texts[text_name])
+            text = bpy.data.texts.new(text_name)
+            with open(switcher) as f:
+                text.write(f.read())
+            logger.info(
+                "Embedded figure_panel.py — in the GUI: Scripting tab, "
+                "Run Script, then press N in the viewport for the 'Figure' tab.")
+
         scene.export(path_blender)
+        logger.info(f"Exported {path_blender}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description="Blendify example 04: Camera colored PointCloud.")
+        description="Render a point cloud figure from a YAML figure config.")
 
-    # Paths to input files
+    parser.add_argument(
+        "-c",
+        "--config",
+        required=True,
+        type=str,
+        help="Path to the YAML figure config (see configs/figures/)")
+    parser.add_argument(
+        "--set",
+        nargs="*",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override config entries, e.g. --set render.n_samples=8 "
+             "render.resolution=[800,600]")
+
+    # Run-time concerns, not properties of the figure itself
     parser.add_argument(
         "-p",
         "--path",
+        default=None,
         type=str,
-        help="Path to the input point cloud data")
+        help="Input point cloud .pt file (overrides data.path in the config)")
     parser.add_argument(
         "--path_bbox",
         default=None,
         type=str,
-        help="Path to the input bbox data")
-
-    # Point cloud parameters
-    parser.add_argument(
-        "-v",
-        "--voxel",
-        type=float,
-        help="Voxel size")
-    parser.add_argument(
-        "--specularity",
-        default=0.1,
-        type=float)
-    parser.add_argument(
-        "--roughness",
-        default=0.2,
-        type=float)
-    parser.add_argument(
-        "--no_centering",
-        action='store_true',
-        help="Whether to center the point cloud before rendering")
-
-    # Rendering parameters
+        help="Input bbox .ply file (overrides bbox.path in the config)")
     parser.add_argument(
         "--image",
         action='store_true',
-        help="Whether to render images")
+        help="Render one still image per *_colors key in the data")
     parser.add_argument(
         "--video",
         action='store_true',
-        help="Whether to render video")
-    parser.add_argument(
-        "--engine",
-        type=str,
-        default="CYCLES",
-        choices=["CYCLES", "BLENDER_EEVEE", "BLENDER_WORKBENCH"],
-        help="Blender rendering engines. Supports 'CYCLES', 'BLENDER_EEVEE', "
-             "'BLENDER_WORKBENCH'? (default: CYCLES)")
-    parser.add_argument(
-        "-n",
-        "--n-samples",
-        default=64,
-        type=int,
-        help="Number of paths to trace for each pixel in the render (default: 64)")
-    parser.add_argument(
-        "--duration",
-        default=20,
-        type=float,
-        help="Duration of the video")
-    parser.add_argument(
-        "--fps",
-        default=30,
-        type=int,
-        help="Number of frames per second in video renderings (default: 20)")
-    parser.add_argument(
-        "-res",
-        "--resolution",
-        default=(2100, 1400),
-        nargs=2,
-        type=int,
-        help="Rendering resolution, (default: (2100, 1400))")
-    parser.add_argument(
-        "--cpu",
-        action="store_true",
-        help="Use CPU for rendering (by default GPU is used)")
-
-    # Other parameters
+        help="Render a video along the config's camera trajectory")
     parser.add_argument(
         "--export",
         action='store_true',
-        help="Whether to export the scene to a .blender file")
-    parser.add_argument(
-        "-b",
-        "--backend",
-        type=str,
-        default="orig",
-        choices=["orig", "open3d", "pytorch3d"],
-        help="Backend to use for normal estimation. Orig corresponds to "
-             "original mesh normals, i.e. no estimation is performed (default: orig)")
-
-    parser.add_argument(
-        "-m",
-        "--mode",
-        type=str,
-        default=None,
-        help="Mode for printing a scene. Some predefined recipes are there.")
-    parser.add_argument(
-        "--default_color",
-        type=str,
-        default='0_level',
-        help="Color that will be used for displaying in blender.")
+        help="Export the scene to a .blend file for inspection in the GUI")
 
     arguments = parser.parse_args()
     main(arguments)

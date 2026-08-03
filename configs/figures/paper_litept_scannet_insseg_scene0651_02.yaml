@@ -1,0 +1,10 @@
+# Migrated from the --mode chains of examples/00_custom.py
+extends: ../base.yaml
+
+camera:
+  translation: [-3.1515419483184814, -1.9629572629928589, 4.700793266296387]
+  quaternion: [0.8152374625205994, 0.3115808665752411, -0.1690923422574997, -0.4579443335533142]
+sun:
+  energy: 1.2
+world:
+  strength: 0.7

@@ -1,0 +1,32 @@
+# MALIBU3D ROI D075_UU-S1-3 — 512 x 512 m, ~4.0 M points.
+# Colorizations: rgb, elevation, semantic, forest, natural_habitat
+extends: ../malibu3d.yaml
+
+data:
+  # Points at the source drop. The first run parses it (~55 s) and caches the
+  # result under data/.figcache/; every later run loads in ~1 s. The cache is
+  # rebuilt automatically if the PLY or palettes.json changes.
+  path: data/malibu3d/send_29_07_v2/blender_export/D075_UU-S1-3/D075_UU-S1-3.ply.gz
+
+camera:
+  translation: [-148.8197937, 332.4529724, 283.6636353]
+  quaternion: [-0.197179, -0.0911557, 0.4096073, 0.8860208]
+  fov_x_deg: 73.0
+  near: 0.1
+  far: 1000.0
+
+sun:
+  energy: 2.5
+  color: [1.0, 0.9399852, 0.7728401]
+  location: [0.0, 0.0, 5.0]
+  rotation_euler: [4.0281625, 0.8899912, 1.5299786]
+
+world:
+  color: [1.0, 0.934681, 0.78918]
+  strength: 0.8
+
+graphs:
+  items:
+    - path: data/malibu3d/send_29_07_v2/blender_export/D075_UU-S1-3/D075_UU-S1-3_ROADS_graph.gpkg
+      name: roads_gt
+      color: [0.3, 0.55, 1.0]

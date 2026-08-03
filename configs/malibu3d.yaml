@@ -1,0 +1,67 @@
+# Shared defaults for MALIBU3D aerial ROIs.
+# Individual ROI configs extend this and override the camera.
+extends: base.yaml
+
+data:
+  palettes: data/malibu3d/send_29_07_v2/blender_export/palettes.json
+  default_color: rgb
+  add_xyz: true
+  # Points sit on a ~0.26 m grid, so 0.15 m would just close the gaps; 0.5 m
+  # deliberately overlaps them so surfaces read as solid rather than stippled.
+  # If you subsample, scale this up by sqrt(n_full / n_kept).
+  voxel: 0.5
+  center: true
+  subsample: null
+  # The subtile-seam points (no MNT coverage, see RESEARCH.md) are void in
+  # elevation, forest AND natural_habitat alike, and would otherwise speckle a
+  # 102.4 m grid across all three. Dropping by `elevation` removes exactly that
+  # set. Deliberately NOT `semantic`, whose void class is a real 18% of the cloud.
+  drop_void: [elevation]
+
+render:
+  engine: CYCLES
+  n_samples: 64
+
+sun:
+  # Aerial scenes read best with a fairly high, slightly warm sun
+  energy: 3.0
+  color: [1.0, 0.9358, 0.8358]
+  rotation_euler: [0.6981316804885864, 0.0, 0.7853981852531433]
+
+world:
+  strength: 0.8
+
+point_cloud:
+  specularity: 0.05     # aerial lidar looks wrong when it glints
+  roughness: 0.4
+
+void:
+  # Unannotated points sit behind the annotated ones visually: neutral grey and
+  # a little transparent, so they read as context rather than as a class.
+  color: [0.74, 0.74, 0.74]
+  alpha: 0.55
+
+color:
+  # The aerial RGB comes in a touch over-saturated, mostly in the greens.
+  # Sweep with: --set color.saturation=0.7 (or 1.0 to see the raw values).
+  apply_to: [rgb]
+  saturation: 0.85
+  variants:
+    # Greyscale, from the photo only — label palettes must keep their colours.
+    - name: grayscale
+      from: rgb
+      saturation: 0.0
+    # Muted backdrop for graph figures: desaturated and nearly transparent.
+    - name: rgb_muted
+      from: rgb
+      saturation: 0.5
+      alpha: 0.05
+
+graphs:
+  # Networks float above the cloud. Node spheres are given a positive radius so
+  # the objects exist and stay tunable in the GUI; set 0 to omit them entirely.
+  height: 45.0
+  radius: 1.6
+  node_radius: 2.4
+  alpha: 1.0
+  emission: 0.15

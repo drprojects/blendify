@@ -1,0 +1,21 @@
+# Migrated from the --mode chains of examples/00_custom.py
+extends: ../base.yaml
+
+camera:
+  translation: [-0.1313309222459793, -7.50628137588501, 3.815814971923828]
+  quaternion: [0.8719961047172546, 0.4894148111343384, -0.00020381153444759548, -0.009800762869417667]
+sun:
+  energy: 2.2
+  rotation_euler: [0.1745329201221466, 0.0, -0.7853981852531433]
+world:
+  strength: 0.7
+video:
+  start_position: [0, 3, 1.7]
+  start_target: [5, 0, 1.4]
+  spiral_target: [0, 3, 1.7]
+  spin_spiral_ratio: 0.5
+  spin_angle: 3.141592653589793
+  spiral_angle: 9.42477796076938
+  z_max: 50.0
+  r_max: 50.0
+  color_times: [[rgb, 0], [0_level, 0.5], [pred, 1.5]]

@@ -6,3 +6,4 @@ build/
 dist/
 blendify.egg-info/
 data/
+__pycache__/
