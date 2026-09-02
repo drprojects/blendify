@@ -104,6 +104,10 @@ color:
 # the three network types.
 graphs:
   items: []             # [{path: ..., color: [r,g,b], height: ..., name: ...}, ...]
+  # Name of an --exploded layer the graphs ride on. The graphs are parented to
+  # that slab, so they inherit its per-frame position and appear with it. null
+  # leaves them in world space, which is what a still figure wants.
+  on_layer: null
   coord_translation: auto   # `auto` reads it from the <roi>_meta.json sidecar
   # Follow the terrain instead of floating on one plane. `height` then becomes
   # a clearance ABOVE THE GROUND rather than an absolute z, and is still applied

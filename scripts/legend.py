@@ -46,6 +46,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from figlib.config import load_config  # noqa: E402
 from figlib.palettes import VOID_NAMES, hex_to_rgb, is_continuous, load_palettes  # noqa: E402
 
 
@@ -86,6 +87,19 @@ RAMP_LABELS = {
     "strength": {"ends": ("low", "high")},
 }
 
+# The `grayscale` layer is the muted backdrop the network graphs are drawn over,
+# so its key is a key to the *graphs*, and those colours live in the figure
+# config's `graphs.items`, not in any palette JSON. Same rule as the palettes:
+# read them from the file the renderer read, so a recoloured network cannot
+# disagree with its own legend. The names there are `<kind>_<role>`; only the
+# kind is worth printing, and only `_gt` items are drawn in this video.
+GRAPH_LAYERS = ("grayscale",)
+GRAPH_LABELS = {
+    "roads": "Roads",
+    "railroads": "Railroads",
+    "transmission": "Transmission lines",
+}
+
 DEFAULT_PALETTES = "data/malibu3d/send_29_07_v2/blender_export/palettes.json"
 DEFAULT_OVERRIDES = ["configs/palettes/malibu3d_extra.json"]
 
@@ -101,6 +115,18 @@ TITLE_INK = (26, 26, 30, 255)
 # without the list fading out over the frosted panel underneath.
 CLASS_INK = (105, 105, 112, 255)
 SWATCH_BORDER = (0, 0, 0, 55)
+
+# The class key is deliberately set smaller than the title, by this factor. It
+# is a lookup table, read once and scanned, not prose -- whereas the title is
+# the caption the viewer reads on every cut, so it stays at TITLE_SIZE. The
+# factor also buys back width where it hurts most: `semantic` in four columns is
+# the widest insert in the sequence, and its width is almost entirely class
+# text, so it shrinks nearly in proportion. Tunable with --item-scale; much
+# below 0.7 the Times serifs start to break up at 1080p. At 0.75 the class type
+# is ~19px in the final frame -- small, but this is a video caption read once,
+# not body text, and it is rendered at `scale` and downsampled, which keeps the
+# stems clean.
+ITEM_SCALE = 0.75
 
 TITLE_GAP = 16          # bottom of the title zone to the first class row
 ROW_LEADING = 1.42      # class row pitch, as a multiple of the class size
@@ -175,6 +201,28 @@ def classes(palette, max_classes=16):
     if max_classes and len(kept) > max_classes:
         return kept[:max_classes], len(kept) - max_classes
     return kept, 0
+
+
+def graph_entries(config_path):
+    """(label, "#rrggbb") pairs for the ground-truth networks a config draws.
+
+    Returns `[]` for a config with no `graphs.items`, so a legend asked for a
+    scene that has no networks falls back to title-only rather than failing.
+    """
+    if not config_path:
+        return []
+    items = (load_config(config_path).get("graphs") or {}).get("items") or []
+    out = []
+    for item in items:
+        name = str(item.get("name", ""))
+        kind, _, role = name.rpartition("_")
+        if role != "gt":
+            continue                             # predictions are not rendered here
+        label = GRAPH_LABELS.get(kind, kind.replace("_", " "))
+        rgb = tuple(max(0, min(255, int(round(float(c) * 255))))
+                    for c in item["color"][:3])
+        out.append((sentence_case(label), "#%02X%02X%02X" % rgb))
+    return out
 
 
 def _swatch(size, color, scale, radius_frac=0.22):
@@ -317,44 +365,52 @@ def capsule_padding(content_height, pad_y, margin=0.25):
     return int(math.ceil(bite * (1.0 + margin)))
 
 
-def render_legend(name, title, palettes, scale=2.0, max_classes=16, columns=None):
+def render_legend(name, title, palettes, scale=2.0, max_classes=16, columns=None,
+                  item_scale=ITEM_SCALE, figure_config=None):
     """Render one layer's legend to an RGBA image, title pinned to the top-left.
 
     A layer with no palette (`rgb`, `grayscale`) legitimately gets a title and
-    nothing else -- there is no key to give for a photograph or a road network
-    drawn in a single colour -- so a missing palette is not an error here.
+    nothing else -- there is no key to give for a photograph -- so a missing
+    palette is not an error here. `figure_config` is the figure YAML being
+    rendered; it is what gives the network layers their key.
     """
     title = sentence_case(title)
+    # `item_scale` shrinks the whole key -- type, swatches, gaps, ramp bar -- so
+    # its internal proportions survive; it never touches the title, whose
+    # position and size must not move between layers.
+    item = lambda v: _px(v * item_scale, scale)  # noqa: E731
     title_font = ImageFont.truetype(FONT_BOLD, _px(TITLE_SIZE, scale))
-    class_font = ImageFont.truetype(FONT_REGULAR, _px(CLASS_SIZE, scale))
+    class_font = ImageFont.truetype(FONT_REGULAR, item(CLASS_SIZE))
 
     palette = palettes.get(name)
     continuous = palette is not None and is_continuous(palette)
     entries, hidden = ([], 0)
     if palette is not None and not continuous:
         entries, hidden = classes(palette, max_classes)
+    elif name in GRAPH_LAYERS:
+        entries = graph_entries(figure_config)
 
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     title_w = _text_width(probe, title, title_font)
     zone = title_zone_height(scale)
     baseline = title_baseline(scale)
 
-    swatch = _px(CLASS_SIZE * 0.92, scale)
-    row_pitch = _px(CLASS_SIZE * ROW_LEADING, scale)
-    gap = _px(SWATCH_TEXT_GAP, scale)
-    col_gap = _px(COLUMN_GAP, scale)
+    swatch = item(CLASS_SIZE * 0.92)
+    row_pitch = item(CLASS_SIZE * ROW_LEADING)
+    gap = item(SWATCH_TEXT_GAP)
+    col_gap = item(COLUMN_GAP)
 
     rows = list(entries)
     if hidden:
         rows.append((f"+{hidden} more", None))
 
     if continuous:
-        bar_w, bar_h = _px(RAMP_WIDTH, scale), _px(RAMP_HEIGHT, scale)
+        bar_w, bar_h = item(RAMP_WIDTH), item(RAMP_HEIGHT)
         lo_text, hi_text = _ramp_ends(name, palette)
         label_h = sum(class_font.getmetrics())
         body_w = max(bar_w, _text_width(probe, lo_text, class_font)
                      + _text_width(probe, hi_text, class_font) + gap)
-        body_h = bar_h + _px(RAMP_LABEL_GAP, scale) + label_h
+        body_h = bar_h + item(RAMP_LABEL_GAP) + label_h
     elif rows:
         n_cols = columns or COLUMNS.get(name) or _auto_columns(
             len(rows), row_pitch, zone, scale)
@@ -381,7 +437,7 @@ def render_legend(name, title, palettes, scale=2.0, max_classes=16, columns=None
 
     if continuous:
         image.alpha_composite(_ramp(bar_w, bar_h, palette, scale), (0, int(y0)))
-        y_text = y0 + bar_h + _px(RAMP_LABEL_GAP, scale)
+        y_text = y0 + bar_h + item(RAMP_LABEL_GAP)
         draw.text((0, y_text), lo_text, font=class_font, fill=CLASS_INK)
         draw.text((bar_w, y_text), hi_text, font=class_font, fill=CLASS_INK,
                   anchor="ra")
@@ -418,11 +474,17 @@ def main(argv=None):
                         help="render at this multiple of final frame pixels")
     parser.add_argument("--max-classes", type=int, default=16,
                         help="classes to list before truncating the key")
+    parser.add_argument("--item-scale", type=float, default=ITEM_SCALE,
+                        help="size of the class key relative to the title "
+                             f"(default {ITEM_SCALE}); does not move the title")
     parser.add_argument("--columns", type=int, default=None,
                         help="force a column count for the class key")
     parser.add_argument("--pad-y", type=float, default=34.0,
                         help="caller's vertical panel padding, in final frame "
                              "pixels; used to report the capsule end-cap padding")
+    parser.add_argument("--figure-config",
+                        help="figure YAML whose `graphs.items` supply the "
+                             "network layer's key")
     parser.add_argument("--palettes", default=DEFAULT_PALETTES)
     parser.add_argument("--palette-overrides", default=",".join(DEFAULT_OVERRIDES),
                         help="comma-separated override JSON/YAML files")
@@ -434,7 +496,8 @@ def main(argv=None):
 
     def emit(name, title, path):
         image = render_legend(name, title, palettes, args.scale,
-                              args.max_classes, args.columns)
+                              args.max_classes, args.columns, args.item_scale,
+                              args.figure_config)
         image.save(path)
         # Padding is quoted in final frame pixels, which is what the compositor
         # works in once it has downscaled the insert by `scale`.

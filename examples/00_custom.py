@@ -25,7 +25,7 @@ import sys
 sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
 from figlib import (load_config, apply_overrides, require, load_point_cloud,
                     grade, is_neutral, ALPHA_NODE_NAME)
-from figlib.grading import srgb_to_linear
+from figlib.grading import srgb_to_linear, linear_to_srgb
 from figlib.blender_material import (build_grading_chain, apply_grade, read_grade,
                                      store_layers, DEFAULT_GRADE,
                                      build_ramp_chain, select_source)
@@ -603,6 +603,33 @@ def main(args):
                     colorizations[name], white_balance=c_color["white_balance"])
         logger.info(f"Baked white balance {c_color['white_balance']}")
 
+    # Saturation above 1 has to be BAKED, not left to the shader. The shader
+    # path drives a Mix node's factor, and Cycles clamps that factor at 1.0, so
+    # a boost above 1 renders byte-identical to no boost at all -- silently.
+    # numpy has no such limit. The shader entry is then pinned to 1.0 so a GUI
+    # slider still scrubs down from the baked look rather than double-applying.
+    #
+    # Only `apply_to` layers are touched, which is the whole point: a boost that
+    # reached a categorical layer would shift its classes away from the palette
+    # its legend is drawn from, and a legend that disagrees with the picture is
+    # worse than no legend. Grading photographic layers only is the rule.
+    if base_grade["saturation"] > 1.0:
+        baked = []
+        for name in sorted(graded_layers):
+            if name not in colorizations:
+                continue
+            layer = colorizations[name]
+            boosted = grade(linear_to_srgb(layer[:, :3]),
+                            saturation=base_grade["saturation"])
+            colorizations[name] = np.concatenate(
+                [srgb_to_linear(boosted).astype(np.float32), layer[:, 3:]],
+                axis=1)
+            layer_grades[name]["saturation"] = 1.0
+            baked.append(name)
+        logger.info(f"Baked saturation {base_grade['saturation']} into "
+                    f"{baked} (the shader clamps it at 1.0); "
+                    f"{sorted(set(colorizations) - set(baked))} left untouched")
+
     # A variant is the same source colours under a different grading preset, so
     # it needs no colour array of its own — just its own entry pointing at the
     # source layer's attribute.
@@ -681,7 +708,6 @@ def main(args):
             source = variant.get("from", "rgb")
             if source not in colorizations:
                 continue
-            from figlib.grading import linear_to_srgb
             base = colorizations[source]
             srgb = linear_to_srgb(base[:, :3])
             baked = grade(srgb, saturation=variant.get("saturation", 1.0))
@@ -781,6 +807,7 @@ def main(args):
 
     # Draw network graphs, aligned to the cloud and floating on one plane
     c_graphs = cfg["graphs"]
+    graph_objects, graph_materials = [], []
     if c_graphs["items"]:
         translation = c_graphs["coord_translation"]
         if translation == "auto":
@@ -859,7 +886,7 @@ def main(args):
                                   item.get("emission", c_graphs["emission"])),
                 roughness=item.get("roughness", c_graphs["roughness"]),
                 cast_shadow=item.get("cast_shadow", c_graphs["cast_shadow"]))
-            draw_graph(
+            graph_objects += draw_graph(
                 aligned,
                 material,
                 node_material=node_material,
@@ -868,6 +895,7 @@ def main(args):
                 name=graph_name,
                 height=item.get("height", c_graphs["height"]),
                 cast_shadow=item.get("cast_shadow", c_graphs["cast_shadow"]))
+            graph_materials += [m for m in (material, node_material) if m]
             logger.info(
                 "  node colour: " + ("no nodes" if node_material is None else
                                      "same as edges" if node_color is None
@@ -876,6 +904,24 @@ def main(args):
                 f"Drew graph {graph['name']} "
                 f"({len(aligned['edges'])} edges, {len(aligned['nodes'])} nodes) "
                 f"at z={item.get('height', c_graphs['height'])}")
+
+    # In an exploded stack the graphs belong to ONE slab, not to the world.
+    # Parenting them to it is what makes them travel with it: the slab's Z is
+    # rewritten every frame, and a graph left in world space would stay on the
+    # ground while the layer it annotates climbs away from it.
+    graph_host = None
+    if args.exploded and c_graphs["on_layer"] and graph_objects:
+        layer = c_graphs["on_layer"]
+        if layer not in names:
+            raise KeyError(f"graphs.on_layer={layer!r} is not one of the "
+                           f"--exploded layers {names}")
+        graph_host = slabs[names.index(layer)].base_object
+        for obj in graph_objects:
+            obj.parent = graph_host
+            # Without this the child jumps by the parent's current transform.
+            obj.matrix_parent_inverse = graph_host.matrix_world.inverted()
+        logger.info(f"Parented {len(graph_objects)} graph objects to slab "
+                    f"{layer!r} (index {names.index(layer)})")
 
     # Read and draw bounding boxes
     bbox_path = args.path_bbox or c_bbox["path"]
@@ -1096,6 +1142,18 @@ def main(args):
                     hidden = not bool(state.get("visible", True))
                     slab.base_object.hide_render = hidden
                     slab.base_object.hide_viewport = hidden
+                    # hide_render does not propagate to children, and a network
+                    # hanging in the air with no layer under it is worse than
+                    # one that simply has not arrived yet.
+                    if graph_host is not None and slab.base_object is graph_host:
+                        for obj in graph_objects:
+                            obj.hide_render = hidden
+                            obj.hide_viewport = hidden
+                        for mat in graph_materials:
+                            node = mat.node_tree.nodes.get("Principled BSDF")
+                            if node is not None and "alpha" in state:
+                                node.inputs["Alpha"].default_value = float(
+                                    state["alpha"])
             img = scene.render(use_gpu=not c_render["cpu"],
                                samples=c_render["n_samples"])
             # Keep the alpha: compositing onto white is an assembly-time

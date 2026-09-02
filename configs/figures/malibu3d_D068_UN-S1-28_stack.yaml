@@ -1,0 +1,49 @@
+# Exploded layer stack for the MALIBU3D demo video — the shot that reveals all
+# nine layers of one ROI in turn and then fuses them back into the photo.
+#
+# Kept separate from the plain figure config because everything here is a
+# *video* decision: a preview-sized frame, a subsampled cloud (nine copies of
+# it are in the scene at once), and networks that ride the grayscale slab
+# instead of sitting in world space.
+extends: malibu3d_D068_UN-S1-28.yaml
+
+data:
+  add_xyz: false
+  subsample: 900000       # x9 slabs; voxel already scaled to suit
+  voxel: 2.6
+
+camera:
+  fov_x_deg: 45
+
+render:
+  n_samples: 24
+  resolution: [960, 540]
+
+color:
+  # Applies to color.apply_to only, which is [rgb]: the photographic layer is
+  # graded, every categorical layer keeps the exact palette its legend is drawn
+  # from. Above 1.0 the saturation is baked into the colour array, because the
+  # shader path clamps it and would silently do nothing.
+  saturation: 2.0
+  brightness: -0.15
+  contrast: -0.2
+
+graphs:
+  on_layer: grayscale     # parent the networks to that slab so they travel with it
+  height: 5.0             # clearance above the draped ground
+  radius: 1.0             # edge tube
+  node_radius: 3.0        # node spheres read the junctions at this scale
+  # Ground truth roads only. The ROI also ships a RAILROADS graph; adding it is
+  # two more lines here plus a re-render, but the shot is captioned "Road
+  # network" and a legend that lists a second network the caption does not name
+  # is a worse trade than the extra content is worth.
+  #
+  # The nodes take a darkened version of the edge colour, which separates
+  # junctions from spans without introducing a second hue; the edge hue is
+  # knocked back from the prepare_rois default, which sits too bright over a
+  # grayscale backdrop.
+  items:
+    - path: data/malibu3d/send_29_07_v2/blender_export/D068_UN-S1-28/D068_UN-S1-28_ROADS_graph.gpkg
+      name: roads_gt
+      color: [0.24, 0.44, 0.85]
+      node_color: [0.13, 0.25, 0.55]

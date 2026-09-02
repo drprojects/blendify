@@ -57,6 +57,7 @@ tight as the type can bear. Both are measured in `measure_shapes`.
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+CONTENT_MARGIN = 0.088   # frame fraction, to the CONTENT edge of a corner insert
 SHAPES = ("rect", "ellipse", "capsule")
 
 
@@ -214,8 +215,18 @@ def fit_box(size, content, position="centre", pad=(46, 34), offset=(0, 0),
     bw, bh = shape_box(content, shape, pad, cap_ratio)
     if position == "centre":
         x0, y0 = (width - bw) / 2, (height - bh) * centre_y
-    elif position == "bottom-left":
-        x0, y0 = width * 0.045, height - bh - height * 0.075
+    elif position in ("bottom-left", "bottom-right", "top-left", "top-right"):
+        # Anchor the CONTENT, not the panel. What a reader lines up is the type,
+        # and a capsule's end cap scales with the panel's own height, so
+        # anchoring the panel leaves a four-row legend's title tens of pixels
+        # further in than a one-row legend's. Anchoring the content inverts
+        # that: panels of different sizes start at different x, their titles do
+        # not. The margin is to the content edge and so has to clear the widest
+        # cap, which is why it is larger than a panel margin would be.
+        cw, ch = content
+        mx, my = width * CONTENT_MARGIN, height * CONTENT_MARGIN
+        x0 = (mx if position.endswith("left") else width - mx - cw) - (bw - cw) / 2
+        y0 = (my if position.startswith("top") else height - my - ch) - (bh - ch) / 2
     else:
         raise ValueError(position)
     return (x0 + offset[0], y0 + offset[1], x0 + bw + offset[0], y0 + bh + offset[1])
