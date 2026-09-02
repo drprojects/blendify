@@ -30,9 +30,10 @@ color:
 
 graphs:
   on_layer: grayscale     # parent the networks to that slab so they travel with it
-  height: 5.0             # clearance above the draped ground
-  radius: 1.0             # edge tube
-  node_radius: 3.0        # node spheres read the junctions at this scale
+  height: 30.0            # clears the tree canopy; below this the network
+                          # is chopped up by the points in front of it
+  radius: 6.0             # edge tube
+  node_radius: 14.0       # >> radius, so junctions read as distinct beads
   # Ground truth roads only. The ROI also ships a RAILROADS graph; adding it is
   # two more lines here plus a re-render, but the shot is captioned "Road
   # network" and a legend that lists a second network the caption does not name
@@ -46,4 +47,4 @@ graphs:
     - path: data/malibu3d/send_29_07_v2/blender_export/D068_UN-S1-28/D068_UN-S1-28_ROADS_graph.gpkg
       name: roads_gt
       color: [0.24, 0.44, 0.85]
-      node_color: [0.13, 0.25, 0.55]
+      node_color: [0.156, 0.286, 0.5525]   # edge x 0.65 -- a scalar keeps the hue exact

@@ -916,12 +916,23 @@ def main(args):
             raise KeyError(f"graphs.on_layer={layer!r} is not one of the "
                            f"--exploded layers {names}")
         graph_host = slabs[names.index(layer)].base_object
+        roots = 0
         for obj in graph_objects:
+            # Re-parent only the ROOTS. draw_graph already parents a graph's
+            # node spheres to its edge curve, and the floating `height` lives on
+            # that curve, so stealing the nodes for the slab drops them to
+            # ground level while the edges float -- the two halves of one
+            # network at different altitudes. Reattaching only the roots keeps
+            # nodes -> edges -> slab intact.
+            if obj.parent is not None:
+                continue
             obj.parent = graph_host
             # Without this the child jumps by the parent's current transform.
             obj.matrix_parent_inverse = graph_host.matrix_world.inverted()
-        logger.info(f"Parented {len(graph_objects)} graph objects to slab "
-                    f"{layer!r} (index {names.index(layer)})")
+            roots += 1
+        logger.info(f"Parented {roots} graph root(s) to slab {layer!r} "
+                    f"(index {names.index(layer)}); "
+                    f"{len(graph_objects) - roots} kept their own parent")
 
     # Read and draw bounding boxes
     bbox_path = args.path_bbox or c_bbox["path"]

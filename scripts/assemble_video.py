@@ -85,7 +85,12 @@ def prepare_title(shot, size, fps):
     from compose_title import load_title
     return {"art": load_title(spec["path"], size[0]),
             "start": int(spec["start"]),
-            "fade": max(int(round(spec.get("fade_in", 1.0) * fps)), 1)}
+            "fade": max(int(round(spec.get("fade_in", 1.0) * fps)), 1),
+            # `hold` absent means hold to the end of the shot, which is what a
+            # closing card wants; an opening card gives both and departs.
+            "hold": (None if spec.get("hold") is None
+                     else max(int(round(spec["hold"] * fps)), 0)),
+            "out": max(int(round(spec.get("fade_out", 0.0) * fps)), 1)}
 
 
 def background(size, style="gradient"):
@@ -267,7 +272,11 @@ def main():
         if lead is not None and lead[0].get("_title"):
             from compose_title import draw_title
             spec = lead[0]["_title"]
-            weight = smoothstep((lead[1] - spec["start"]) / spec["fade"])
+            local = lead[1] - spec["start"]
+            weight = smoothstep(local / spec["fade"])
+            if spec["hold"] is not None:
+                gone = local - spec["fade"] - spec["hold"]
+                weight = min(weight, 1.0 - smoothstep(gone / spec["out"]))
             frame = draw_title(frame, spec["art"], weight * caption[2])
         frame = draw_label(frame, caption[0], caption[1], caption[2], size,
                            args.label_position)
