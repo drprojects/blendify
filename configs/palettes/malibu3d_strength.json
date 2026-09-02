@@ -1,0 +1,332 @@
+{
+  "strength_grey": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        17,
+        17,
+        17
+      ],
+      [
+        61,
+        61,
+        61
+      ],
+      [
+        107,
+        107,
+        107
+      ],
+      [
+        156,
+        156,
+        156
+      ],
+      [
+        207,
+        207,
+        207
+      ],
+      [
+        255,
+        255,
+        255
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  },
+  "strength_viridis": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        68,
+        1,
+        84
+      ],
+      [
+        65,
+        68,
+        135
+      ],
+      [
+        42,
+        120,
+        142
+      ],
+      [
+        34,
+        168,
+        132
+      ],
+      [
+        122,
+        209,
+        81
+      ],
+      [
+        253,
+        231,
+        37
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  },
+  "strength_magma": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        0,
+        0,
+        4
+      ],
+      [
+        59,
+        15,
+        112
+      ],
+      [
+        140,
+        41,
+        129
+      ],
+      [
+        222,
+        73,
+        104
+      ],
+      [
+        254,
+        159,
+        109
+      ],
+      [
+        252,
+        253,
+        191
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  },
+  "strength_cividis": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        0,
+        34,
+        78
+      ],
+      [
+        18,
+        53,
+        112
+      ],
+      [
+        59,
+        73,
+        108
+      ],
+      [
+        87,
+        93,
+        109
+      ],
+      [
+        118,
+        121,
+        112
+      ],
+      [
+        169,
+        157,
+        91
+      ],
+      [
+        225,
+        204,
+        85
+      ],
+      [
+        254,
+        232,
+        56
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  },
+  "strength_amber": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        43,
+        23,
+        0
+      ],
+      [
+        92,
+        50,
+        0
+      ],
+      [
+        156,
+        86,
+        0
+      ],
+      [
+        217,
+        134,
+        0
+      ],
+      [
+        245,
+        185,
+        66
+      ],
+      [
+        255,
+        231,
+        173
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  },
+  "strength_steel": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        8,
+        25,
+        46
+      ],
+      [
+        18,
+        58,
+        92
+      ],
+      [
+        30,
+        96,
+        145
+      ],
+      [
+        61,
+        143,
+        192
+      ],
+      [
+        130,
+        189,
+        224
+      ],
+      [
+        214,
+        234,
+        247
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  },
+  "strength_viridis_linear": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        68,
+        1,
+        84
+      ],
+      [
+        65,
+        68,
+        135
+      ],
+      [
+        42,
+        120,
+        142
+      ],
+      [
+        34,
+        168,
+        132
+      ],
+      [
+        122,
+        209,
+        81
+      ],
+      [
+        253,
+        231,
+        37
+      ]
+    ],
+    "percentile_low": 2.0,
+    "percentile_high": 98.0,
+    "gamma": 1.0,
+    "nan_color": "#808080"
+  },
+  "strength_viridis_tight": {
+    "field": "strength",
+    "type": "continuous",
+    "color_stops_rgb": [
+      [
+        68,
+        1,
+        84
+      ],
+      [
+        65,
+        68,
+        135
+      ],
+      [
+        42,
+        120,
+        142
+      ],
+      [
+        34,
+        168,
+        132
+      ],
+      [
+        122,
+        209,
+        81
+      ],
+      [
+        253,
+        231,
+        37
+      ]
+    ],
+    "percentile_low": 5.0,
+    "percentile_high": 95.0,
+    "gamma": 0.65,
+    "nan_color": "#808080"
+  }
+}

@@ -35,6 +35,10 @@ class PointCloud:
     pos: np.ndarray
     colors: dict = field(default_factory=dict)
     void: dict = field(default_factory=dict)
+    # Raw source columns (semantic labels, elevation metres, ...). Keeping them
+    # means a palette change is a re-colorize rather than a re-parse, and the
+    # raw values can be carried into the .blend for live editing.
+    fields: dict = field(default_factory=dict)
     source: str = ""
     # Translation applied by center(), so other geometry (network graphs,
     # bounding boxes) can be brought into the same frame
@@ -91,6 +95,7 @@ class PointCloud:
         self.pos = self.pos[keep]
         self.colors = {k: v[keep] for k, v in self.colors.items()}
         self.void = {k: v[keep] for k, v in self.void.items()}
+        self.fields = {k: v[keep] for k, v in self.fields.items()}
         return self
 
     def subsample(self, n, seed=0):
@@ -182,7 +187,11 @@ def _read_npz(path, **kwargs):
         key[: -len("_void")]: data[key].astype(bool)
         for key in data.files if key.endswith("_void")
     }
-    return PointCloud(data["pos"], colors, void, source=path)
+    raw = {
+        key[: -len("_field")]: data[key]
+        for key in data.files if key.endswith("_field")
+    }
+    return PointCloud(data["pos"], colors, void, raw, source=path)
 
 
 def _read_ply(path, palettes=None, log=print, **kwargs):
@@ -218,19 +227,16 @@ def _read_ply(path, palettes=None, log=print, **kwargs):
                 [vertex[c] for c in channels], axis=1).astype(np.uint8)
             log(f"  {name}: precomputed RGB channels")
 
-    # raw fields colorized through the palette file
-    palettes = palettes or {}
+    # Keep every raw column that a palette could consume. Colorization happens
+    # later (see `colorize_cloud`) so the cache holds parsed data, not one
+    # particular palette's output.
+    raw = {}
     for name in sorted(fields - _RESERVED):
-        if name in colors or name.endswith(("_red", "_green", "_blue")):
+        if name.endswith(("_red", "_green", "_blue")):
             continue
-        if name not in palettes:
-            log(f"  {name}: no palette entry, skipped")
-            continue
-        log(f"  {name}: colorized from palette")
-        colors[name], void[name] = colorize(
-            vertex[name], palettes[name], on_warning=lambda m: log(f"    {m}"))
+        raw[name] = np.asarray(vertex[name])
 
-    return PointCloud(pos, colors, void, source=path)
+    return PointCloud(pos, colors, void, raw, source=path)
 
 
 def _read_las(path, palettes=None, log=print, **kwargs):
@@ -260,7 +266,7 @@ def _read_las(path, palettes=None, log=print, **kwargs):
             np.asarray(las[name]), palettes[name],
             on_warning=lambda m: log(f"    {m}"))
 
-    return PointCloud(pos, colors, void, source=path)
+    return PointCloud(pos, colors, void, raw, source=path)
 
 
 _READERS = {
@@ -273,14 +279,40 @@ _READERS = {
 }
 
 
+def colorize_cloud(cloud, palettes, log=print):
+    """Build every colorization the palettes describe from the raw columns.
+
+    Runs on every load, including cache hits, so changing a palette is a
+    re-colorize (about a second) rather than a re-parse (minutes). Colours
+    already present — photo RGB, precomputed triplets — are left alone.
+    """
+    palettes = palettes or {}
+    for name, palette in sorted(palettes.items()):
+        source = palette.get("field", name)
+        if source not in cloud.fields:
+            continue
+        suffix = "" if source == name else f" (from field {source!r})"
+        log(f"  {name}: colorized from palette{suffix}")
+        cloud.colors[name], cloud.void[name] = colorize(
+            cloud.fields[source], palette, on_warning=lambda m: log(f"    {m}"))
+
+    for name in sorted(cloud.fields):
+        if name not in cloud.colors and not any(
+                p.get("field", k) == name for k, p in palettes.items()):
+            log(f"  {name}: no palette entry, skipped")
+    return cloud
+
+
 def _cache_path(path, palettes_path, cache_dir, overrides_path=None):
     """Where the parsed form of `path` gets cached.
 
     The key covers the source path plus the size and mtime of both the source
     and the palette file, so editing either invalidates the cache.
     """
+    # Only the SOURCE file identifies the cache. Palettes are applied after
+    # loading, so a colour change must not invalidate a parse.
     parts = [osp.abspath(path)]
-    for dependency in (path, palettes_path, overrides_path):
+    for dependency in (path,):
         if dependency and osp.exists(dependency):
             stat = os.stat(dependency)
             parts.append(f"{stat.st_size}:{stat.st_mtime_ns}")
@@ -322,25 +354,29 @@ def load_point_cloud(path, palettes=None, palette_overrides=None, colors=None,
     if isinstance(palettes, str) or palettes is None:
         palettes = load_palettes(palettes, palette_overrides)
 
-    # Serve from cache when we can
+    # Serve from cache when we can. The cache holds parsed data, so the palette
+    # is applied afterwards either way — a colour change costs a re-colorize,
+    # not a re-parse.
     cached = None
+    cloud = None
     if cache and suffix != ".npz":
-        cached = _cache_path(
-            path, palettes_path, cache_dir,
-            palette_overrides if isinstance(palette_overrides, str) else None)
+        cached = _cache_path(path, palettes_path, cache_dir)
         if osp.exists(cached):
             log(f"Reading {path}\n  (from cache {cached})")
             cloud = _read_npz(cached)
             cloud.source = path
-            return _finish(cloud, path, colors)
 
-    log(f"Reading {path}")
-    cloud = _READERS[suffix](path, palettes=palettes, log=log)
+    if cloud is None:
+        log(f"Reading {path}")
+        cloud = _READERS[suffix](path, palettes=palettes, log=log)
+        if cached is not None:
+            os.makedirs(cache_dir, exist_ok=True)
+            save_npz(cloud, cached)
+            log(f"  cached to {cached} ({osp.getsize(cached) / 1e6:.1f} MB)")
 
-    if cached is not None:
-        os.makedirs(cache_dir, exist_ok=True)
-        save_npz(cloud, cached)
-        log(f"  cached to {cached} ({osp.getsize(cached) / 1e6:.1f} MB)")
+    # Legacy .pt/.npz inputs carry colours but no raw columns; nothing to do.
+    if cloud.fields:
+        colorize_cloud(cloud, palettes, log=log)
 
     return _finish(cloud, path, colors)
 
@@ -364,8 +400,13 @@ def _finish(cloud, path, colors):
 
 
 def save_npz(cloud, path):
-    """Write a PointCloud to a fast-loading .npz cache, void masks included."""
+    """Write a PointCloud to a fast-loading .npz cache.
+
+    Stores the raw source columns as well as any colours, so the cache is a
+    parsed cloud rather than one palette's rendering of it.
+    """
     np.savez_compressed(
         path, pos=cloud.pos,
         **{f"{name}_colors": value for name, value in cloud.colors.items()},
-        **{f"{name}_void": value for name, value in cloud.void.items()})
+        **{f"{name}_void": value for name, value in cloud.void.items()},
+        **{f"{name}_field": value for name, value in cloud.fields.items()})

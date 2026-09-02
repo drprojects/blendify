@@ -1,0 +1,27 @@
+# Lidar return intensity (`strength`) for D075_FU-S1-10, in several ramps.
+#
+# Only this tile carries the field so far. The reader drives colorization from
+# the palette entries rather than the fields, so every ramp below is produced in
+# one parse and shares one cache entry; tiles without `strength` simply skip
+# them and are unaffected.
+extends: ../malibu3d.yaml
+
+data:
+  path: data/malibu3d/send_29_07_v2/blender_export/D075_FU-S1-10/D075_FU-S1-10.ply.gz
+  palette_overrides: configs/palettes/malibu3d_strength.json
+  voxel: 0.422
+  default_color: strength_viridis
+  add_xyz: false
+  colors: [strength_grey, strength_viridis, strength_magma, strength_cividis,
+           strength_amber, strength_steel, strength_viridis_linear,
+           strength_viridis_tight]
+
+color:
+  variants: []          # ramps are the comparison here; no grading variants
+
+camera:
+  translation: [-148.8016, 332.4124, 283.629]
+  quaternion: [-0.197179, -0.0911557, 0.4096073, 0.8860208]
+  fov_x_deg: 73.0
+  near: 0.1
+  far: 2047

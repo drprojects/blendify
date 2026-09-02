@@ -25,7 +25,7 @@ import tempfile
 
 sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
 
-SECTIONS = ("camera", "sun", "world")
+SECTIONS = ("camera", "sun", "world", "render")
 PULLABLE = SECTIONS + ("data", "point_cloud")   # data.voxel, point_cloud.alpha
 
 
@@ -242,7 +242,8 @@ def write_graphs(text, graphs, config):
     print("  items:")
     for name, entry in graphs.items():
         print(f"    - name: {name}")
-        for key in ("color", "alpha", "emission", "radius", "node_radius", "height"):
+        for key in ("color", "node_color", "alpha", "emission", "radius",
+                    "node_radius", "height"):
             if key in entry:
                 print(f"      {key}: {entry[key]!r}")
         if entry.get("hidden"):

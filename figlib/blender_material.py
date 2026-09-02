@@ -28,6 +28,13 @@ GAMMA = "grade_gamma"
 ALPHA = "cloud_alpha"
 LUMINANCE = "grade_luminance"
 
+# Continuous layers are coloured by a live ColorRamp in the shader rather than
+# by a baked colour array, so the ramp can be edited with zero recolour cost.
+VALUE_ATTR = "value_attribute"
+RANGE = "ramp_range"
+RAMP_GAMMA = "ramp_gamma"
+RAMP = "value_ramp"
+
 # Custom property on the scatter object holding every layer's grading
 LAYERS_PROP = "figure_layers"
 
@@ -107,6 +114,122 @@ def build_grading_chain(material):
 
     return {SATURATION: saturation, BRIGHT_CONTRAST: bright_contrast,
             EXPOSURE: exposure, GAMMA: gamma, ALPHA: alpha}
+
+
+def build_ramp_chain(material, stops=None, vmin=0.0, vmax=30.0, gamma=1.0):
+    """Add the live ramp path used by continuous layers.
+
+        Attribute(value_<layer>) -> Map Range -> power(gamma) -> ColorRamp
+
+    Its output is NOT linked here; `select_source` decides whether the grading
+    chain reads this or the baked colour attribute. Evaluated in the shader, so
+    editing the ramp costs nothing per change.
+    """
+    tree = material.node_tree
+    nodes, links = tree.nodes, tree.links
+    if RAMP in nodes:
+        return nodes[RAMP]
+
+    bsdf = nodes["Principled BSDF"]
+    x, y = bsdf.location.x, bsdf.location.y
+
+    value = nodes.new("ShaderNodeAttribute")
+    value.name = value.label = VALUE_ATTR
+    value.attribute_name = ""
+    value.location = (x - 1400, y + 520)
+
+    mapped = nodes.new("ShaderNodeMapRange")
+    mapped.name = mapped.label = RANGE
+    mapped.clamp = True
+    mapped.inputs["From Min"].default_value = float(vmin)
+    mapped.inputs["From Max"].default_value = float(vmax)
+    mapped.inputs["To Min"].default_value = 0.0
+    mapped.inputs["To Max"].default_value = 1.0
+    mapped.location = (x - 1200, y + 520)
+
+    shaped = nodes.new("ShaderNodeMath")
+    shaped.name = shaped.label = RAMP_GAMMA
+    shaped.operation = "POWER"
+    shaped.inputs[1].default_value = float(gamma)
+    shaped.location = (x - 1010, y + 520)
+
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.name = ramp.label = RAMP
+    ramp.location = (x - 830, y + 560)
+
+    links.new(value.outputs["Fac"], mapped.inputs["Value"])
+    links.new(mapped.outputs["Result"], shaped.inputs[0])
+    links.new(shaped.outputs["Value"], ramp.inputs["Fac"])
+
+    if stops:
+        set_ramp_stops(ramp, stops)
+    return ramp
+
+
+MAX_RAMP_ELEMENTS = 32          # Blender's hard limit on a ColorRamp
+
+
+def set_ramp_stops(ramp, stops):
+    """Replace a ColorRamp's elements. `stops` is [[pos, r, g, b], ...] in sRGB.
+
+    A palette may carry more stops than a ColorRamp can hold — the baked colours
+    are computed in numpy and have no such limit, and a denser table renders a
+    smoother ramp. Overflowing stops are resampled onto the limit rather than
+    raising: this widget is a GUI preview of colours that are already baked, so
+    losing a little ramp resolution is right and failing the whole render is not.
+    """
+    from .grading import srgb_to_linear
+    import numpy as _np
+
+    stops = _np.asarray(stops, dtype=float)
+    if len(stops) > MAX_RAMP_ELEMENTS:
+        grid = _np.linspace(float(stops[0, 0]), float(stops[-1, 0]),
+                            MAX_RAMP_ELEMENTS)
+        stops = _np.column_stack([grid] + [
+            _np.interp(grid, stops[:, 0], stops[:, c + 1]) for c in range(3)])
+
+    elements = ramp.color_ramp.elements
+    while len(elements) > 1:
+        elements.remove(elements[-1])
+    first = True
+    for stop in stops:
+        position = float(stop[0])
+        linear = srgb_to_linear(_np.asarray(stop[1:4], dtype=float))
+        element = elements[0] if first else elements.new(position)
+        element.position = position
+        element.color = (*linear, 1.0)
+        first = False
+
+
+def read_ramp_stops(ramp):
+    """Read a ColorRamp back as [[pos, r, g, b], ...] in sRGB."""
+    import numpy as _np
+    out = []
+    for element in ramp.color_ramp.elements:
+        srgb = _np.clip(_np.asarray(element.color[:3], dtype=float), 0, None)
+        srgb = _np.where(srgb <= 0.0031308, srgb * 12.92,
+                         1.055 * srgb ** (1 / 2.4) - 0.055)
+        out.append([round(float(element.position), 5)]
+                   + [round(float(v), 5) for v in srgb])
+    return out
+
+
+def select_source(material, continuous):
+    """Point the grading chain at the ramp (continuous) or the colour attribute."""
+    tree = material.node_tree
+    nodes, links = tree.nodes, tree.links
+    if RAMP not in nodes:
+        return
+    source = nodes[RAMP].outputs["Color"] if continuous else next(
+        n for n in nodes if n.type == "ATTRIBUTE" and n.name != VALUE_ATTR
+    ).outputs["Color"]
+
+    for target, socket in ((nodes[LUMINANCE], "Color"),
+                           (nodes[SATURATION], "Color2")):
+        for link in list(links):
+            if link.to_node is target and link.to_socket.name == socket:
+                links.remove(link)
+        links.new(source, target.inputs[socket])
 
 
 def apply_grade(material, grade, attribute_name=None):

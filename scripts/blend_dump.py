@@ -49,6 +49,7 @@ def dump():
         sun = suns[0]
         out["sun"] = {
             "energy": round(sun.data.energy, 7),
+            "angle": round(math.degrees(sun.data.angle), 5),
             "color": _round(sun.data.color),
             "location": _round(sun.location),
             "rotation_euler": _round(sun.rotation_euler),
@@ -119,14 +120,39 @@ def dump():
         elif obj.type == "MESH" and obj.name.endswith("_nodes"):
             name = obj.name[: -len("_nodes")]
             entry = graphs.setdefault(name, {})
+            node_material = None
             for modifier in getattr(obj, "modifiers", []):
                 if modifier.type == "NODES" and modifier.node_group:
                     for node in modifier.node_group.nodes:
                         if node.type == "MESH_TO_POINTS" and node.inputs.get("Radius"):
                             entry["node_radius"] = round(
                                 node.inputs["Radius"].default_value, 7)
+                        # What actually colours the instanced spheres
+                        if node.bl_idname == "GeometryNodeSetMaterial":
+                            node_material = node.inputs["Material"].default_value
+            if node_material is None and obj.data.materials:
+                node_material = obj.data.materials[0]
+            if node_material is not None and node_material.use_nodes:
+                bsdf = node_material.node_tree.nodes.get("Principled BSDF")
+                if bsdf is not None:
+                    entry["node_color"] = [
+                        round(v, 7) for v in bsdf.inputs["Base Color"].default_value[:3]]
     if graphs:
         out["_graphs"] = graphs
+
+    cycles = getattr(scene, "cycles", None)
+    if cycles is not None:
+        out["render"] = {
+            "fast_gi": bool(getattr(cycles, "use_fast_gi", False)),
+            "ao_bounces": int(getattr(cycles, "ao_bounces_render", 1)),
+        }
+        if scene.world is not None:
+            out["render"]["ao_distance"] = round(
+                scene.world.light_settings.distance, 5)
+    if scene.camera is not None and scene.camera.data.type == "PERSP":
+        out.setdefault("camera", {})["fov_x_deg"] = round(math.degrees(
+            2 * math.atan(0.5 * scene.camera.data.sensor_width
+                          / scene.camera.data.lens)), 4)
 
     out["_resolution"] = [scene.render.resolution_x, scene.render.resolution_y]
     out["_blender_version"] = bpy.app.version_string

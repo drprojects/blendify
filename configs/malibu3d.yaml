@@ -4,6 +4,9 @@ extends: base.yaml
 
 data:
   palettes: data/malibu3d/send_29_07_v2/blender_export/palettes.json
+  # Fields the shared palettes.json does not describe. Tiles lacking the field
+  # simply skip the entry, so this is safe to apply dataset-wide.
+  palette_overrides: configs/palettes/malibu3d_extra.json
   default_color: rgb
   add_xyz: true
   # Points sit on a ~0.26 m grid, so 0.15 m would just close the gaps; 0.5 m
@@ -21,24 +24,35 @@ data:
 render:
   engine: CYCLES
   n_samples: 64
+  fast_gi: true           # contact shadows between crowns and under hedgerows
+  ao_distance: 8.0
+  ao_bounces: 1
 
 sun:
-  # Aerial scenes read best with a fairly high, slightly warm sun
-  energy: 3.0
-  color: [1.0, 0.9358, 0.8358]
-  rotation_euler: [0.6981316804885864, 0.0, 0.7853981852531433]
+  # Pure white light, so rendered colours match the palette hex as closely as
+  # possible. A tinted source shifts every class colour toward its hue.
+  energy: 3.4
+  color: [1.0, 1.0, 1.0]
+  # Sun lowered from 50 deg above the horizon to ~23, so crowns and terrain cast
+  # real shadows instead of being read from colour alone.
+  rotation_euler: [1.1693706, 0.0, 0.7853981852531433]
+  angle: 2.5              # soft-edged shadows, suits an aerial scene
 
 world:
-  strength: 0.8
+  color: [1.0, 1.0, 1.0]   # white ambient, same reason as the sun
+  # Lowered from 0.8: strong ambient fills the shadows back in and flattens the
+  # scene. This is the other half of making relief readable.
+  strength: 0.40
 
 point_cloud:
   specularity: 0.05     # aerial lidar looks wrong when it glints
   roughness: 0.4
 
 void:
-  # Unannotated points sit behind the annotated ones visually: neutral grey and
-  # a little transparent, so they read as context rather than as a class.
-  color: [0.74, 0.74, 0.74]
+  # ONE colour for the unlabelled points of EVERY categorical layer, so figures
+  # stay consistent: #C4C4C4. Change it here and every layer follows; the GUI
+  # panel exposes the same single control.
+  color: [0.7686275, 0.7686275, 0.7686275]   # #C4C4C4
   alpha: 0.55
 
 color:

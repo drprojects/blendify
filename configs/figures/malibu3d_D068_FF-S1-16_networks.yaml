@@ -1,0 +1,23 @@
+# Network-graph figure for D068_FF-S1-16.
+# Extends the networks preset, so nothing here touches the plain tile figure.
+extends: ../networks.yaml
+
+data:
+  path: data/malibu3d/send_29_07_v2/blender_export/D068_FF-S1-16/D068_FF-S1-16.ply.gz
+  voxel: 0.704
+  subsample: 8000000
+
+camera:
+  # Tile camera pulled in x0.5 and raised x1.55 — a near-plan view, since the
+  # thing being shown is a 2D graph.
+  translation: [-148.8107, 332.4327, 879.3035]
+  quaternion: [-0.2047985, -0.0411694, 0.1927332, 0.9587578]
+  fov_x_deg: 73.0
+  near: 0.1
+  far: 4095
+
+graphs:
+  items:
+    - path: data/malibu3d/send_29_07_v2/blender_export/D068_FF-S1-16/D068_FF-S1-16_ROADS_graph.gpkg
+      name: roads_gt
+      color: [0.3, 0.55, 1.0]

@@ -1,0 +1,50 @@
+# Preset for NETWORK-GRAPH figures only.
+#
+# These figures invert the usual priority: the graphs are the message, the point
+# cloud is context. Nothing here applies to any other figure — ordinary tile
+# configs extend malibu3d.yaml directly and are unaffected.
+#
+# The cloud is made recessive by GRADING it pale, not by making it translucent.
+# A cloud whose spheres overlap ~15-deep accumulates opacity (1-(1-a)^n), so a
+# low alpha renders nearly solid, slowly, and with speckle where rays exceed
+# transparent_max_bounces. Grading it light costs nothing and, crucially, keeps
+# the cloud opaque so it can genuinely OCCLUDE a low-floating graph.
+extends: malibu3d.yaml
+
+data:
+  default_color: rgb
+  # All layers are kept so the backdrop can be swapped in the GUI (elevation and
+  # strength both work well behind a network). Not restricted to rgb.
+
+color:
+  # Every continuous/photographic layer is muted, so whichever backdrop you pick
+  # recedes the same way. Categorical layers are left alone — grading a palette
+  # would break its match with the legend.
+  apply_to: [rgb, elevation, strength, xyz]
+  # "subtle" from the variant sweep: enough colour left to tell vegetation from
+  # built surfaces, lifted just enough that the graphs sit forward.
+  saturation: 0.40
+  exposure: 0.40
+  contrast: -0.08       # flatten it; contrast competes for attention
+  variants: []          # the preset IS the muted look; no extra variants needed
+
+point_cloud:
+  specularity: 0.0      # tiny spheres catching highlights read as speckle
+  roughness: 0.75
+  alpha: 1.0            # opaque: needed for real occlusion, and far faster
+
+graphs:
+  # Chosen from the variant sweep: "medium" thickness, 25 m clears 91% of points
+  # so the network reads end to end while tall trees still cross in front.
+  # Revisit the height once six graphs are shown at once (3 types x GT/pred) —
+  # they will need staggering or separate heights.
+  height: 25.0
+  radius: 1.7
+  node_radius: 2.5
+  alpha: 1.0            # graphs opaque — they are the subject
+  emission: 0.12
+  # Off by default: at 25 m the shadow lands far from the graph and reads as a
+  # phantom second network. Kept as a one-line toggle, and exposed in the GUI
+  # panel, for low-height experiments:
+  #     --set graphs.cast_shadow=True
+  cast_shadow: false

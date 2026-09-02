@@ -9,7 +9,7 @@ set -u
 
 PY="${HOME}/miniconda3/envs/blendify/bin/python"
 RESX="${1:-1200}"
-RESY="${2:-800}"
+RESY="${2:-680}"
 SAMPLES="${3:-32}"
 
 cd "$(dirname "$0")/.." || exit 1

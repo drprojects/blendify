@@ -7,8 +7,10 @@ import json
 import logging
 
 import bpy
+from PIL import Image
 import blender_plots as bplt
 import numpy as np
+import os
 import os.path as osp
 from videoio import VideoWriter
 import subprocess
@@ -23,9 +25,14 @@ import sys
 sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
 from figlib import (load_config, apply_overrides, require, load_point_cloud,
                     grade, is_neutral, ALPHA_NODE_NAME)
+from figlib.grading import srgb_to_linear
 from figlib.blender_material import (build_grading_chain, apply_grade, read_grade,
-                                     store_layers, DEFAULT_GRADE)
+                                     store_layers, DEFAULT_GRADE,
+                                     build_ramp_chain, select_source)
 from figlib.graphs import read_gpkg_graph, align_to_cloud, find_meta_json
+from figlib import ground as ground_module
+from figlib.palettes import load_palettes, is_continuous
+from figlib import blender_palette
 from figlib.blender_graph import build_material, draw_graph
 
 
@@ -456,6 +463,20 @@ def main(args):
     # Transparent background
     bpy.context.scene.render.film_transparent = c_render["transparent_film"]
 
+    # Contact shadows via Cycles Fast GI
+    cycles = bpy.context.scene.cycles
+    cycles.use_fast_gi = bool(c_render.get("fast_gi", False))
+    if cycles.use_fast_gi:
+        cycles.fast_gi_method = "ADD"          # darken contacts, keep the key light
+        cycles.ao_bounces_render = int(c_render.get("ao_bounces", 1))
+        world_light = bpy.context.scene.world
+        if world_light is not None:
+            world_light.light_settings.distance = float(
+                c_render.get("ao_distance", 10.0))
+        logger.info(
+            f"Fast GI on: ao_distance={c_render.get('ao_distance', 10.0)} "
+            f"bounces={c_render.get('ao_bounces', 1)}")
+
     # Add camera to the scene (position will be set in the rendering loop)
     # Tip to position the cameras in the blender GUI:
     # - navigate the general viewport as you'd like
@@ -498,6 +519,9 @@ def main(args):
         scale=[1, 1, 1])
     bpy.context.object.data.energy = c_sun["energy"]
     bpy.context.object.data.color = tuple(c_sun["color"])
+    # Angular diameter drives shadow softness: 0.526 deg is the real sun and
+    # gives razor-sharp edges; a few degrees reads better on an aerial scene.
+    bpy.context.object.data.angle = np.deg2rad(float(c_sun.get("angle", 0.526)))
     bpy.context.object.rotation_euler = np.asarray(
         c_sun["rotation_euler"], dtype=np.float32)
 
@@ -512,9 +536,17 @@ def main(args):
 
     # Read input data. Any supported format lands in the same PointCloud object
     root = osp.dirname(data_path)
-    filename = osp.basename(data_path).split(".")[0]
-    path_blender = osp.join(root, filename + '.blend')
-    path_image = osp.join(root, filename)
+    # Outputs are named after the CONFIG, not the data file. Several figures
+    # share one point cloud (the plain tile, the network overlay, an intensity
+    # comparison), and naming by data stem made them silently overwrite each
+    # other's .blend and PNGs. A leading `malibu3d_` is stripped for brevity, so
+    # the plain tile config still produces `<roi>.blend`.
+    figure_name = osp.basename(args.config).rsplit(".", 1)[0]
+    for prefix in ("malibu3d_",):
+        if figure_name.startswith(prefix):
+            figure_name = figure_name[len(prefix):]
+    path_blender = osp.join(root, figure_name + '.blend')
+    path_image = osp.join(root, figure_name)
 
     cloud = load_point_cloud(
         data_path,
@@ -533,8 +565,12 @@ def main(args):
     logger.info(cloud.summary())
     point_size = c_data["voxel"]
 
-    # Blender wants float RGB in [0, 1]
-    colorizations = {name: value.astype(np.float32) / 255.
+    # Blender colour attributes are LINEAR scene-referred. Palette hex codes are
+    # sRGB, so they must be decoded before being written, otherwise the Standard
+    # view transform re-encodes them on output and every colour renders lighter
+    # than specified (#B981A3 came out as #DDBCD1).
+    colorizations = {name: srgb_to_linear(value.astype(np.float32) / 255.)
+                     .astype(np.float32)
                      for name, value in cloud.colors.items()}
 
     # Grading no longer touches the colour arrays. Each layer carries a grading
@@ -611,7 +647,9 @@ def main(args):
         if mask is not None and mask.any():
             rgb = rgb.copy()
             if c_void["color"] is not None:
-                rgb[mask] = np.asarray(c_void["color"], dtype=np.float32)
+                # config void.color is sRGB 0-1 (0.8 == #CCCCCC); linearise it
+                rgb[mask] = srgb_to_linear(
+                    np.asarray(c_void["color"], dtype=np.float32)).astype(np.float32)
             alpha[mask] = float(c_void["alpha"])
             logger.info(
                 f"{name}: {int(mask.sum())} void points muted "
@@ -624,12 +662,64 @@ def main(args):
         raise KeyError(
             f"data.default_color={default_colorname!r} is not in {data_path}. "
             f"Available: {sorted(colorizations)}")
-    scatter = bplt.Scatter(
-        cloud.pos,
-        color=colorizations[default_colorname],
-        marker_type=c_pc["marker_type"],
-        name=f"point_cloud_{default_colorname}",
-        radius=point_size)
+    slabs = []
+    if args.exploded:
+        # One scatter per layer, stacked in Z: the same geometry seen through
+        # every annotation at once. Each slab is its own Scatter because that
+        # is what lets each carry its own colour array and its own material;
+        # the positions are duplicated, which is why this wants a subsampled
+        # cloud rather than the full tile.
+        names = [n.strip() for n in args.exploded.split(",") if n.strip()]
+        # A colour VARIANT (grayscale, rgb_muted) has no colour array of its
+        # own -- it is a grading preset the shader applies to its source layer.
+        # A slab needs real colours, so bake the variant here.
+        variants = {v["name"]: v for v in (c_color["variants"] or [])}
+        for name in names:
+            if name in colorizations or name not in variants:
+                continue
+            variant = variants[name]
+            source = variant.get("from", "rgb")
+            if source not in colorizations:
+                continue
+            from figlib.grading import linear_to_srgb
+            base = colorizations[source]
+            srgb = linear_to_srgb(base[:, :3])
+            baked = grade(srgb, saturation=variant.get("saturation", 1.0))
+            colorizations[name] = np.concatenate(
+                [srgb_to_linear(baked).astype(np.float32), base[:, 3:]], axis=1)
+            logger.info(f"  baked variant {name!r} from {source!r} "
+                        f"(saturation {variant.get('saturation', 1.0)})")
+        missing = [n for n in names if n not in colorizations]
+        if missing:
+            raise KeyError(f"--exploded names {missing}; have {sorted(colorizations)}")
+        span = float(np.ptp(cloud.pos[:, 0]))
+        # When a camera path drives the slabs, their Z comes per frame from the
+        # object transform. Baking a static gap in as well would apply the
+        # offset twice and throw every slab far above where the camera expects.
+        gap = 0.0 if args.frames else c_pc.get("explode_gap", 0.16) * span
+        fan = 0.0 if args.frames else c_pc.get("explode_fan", 0.0) * span
+        logger.info(f"Exploded view: {len(names)} slabs, gap {gap:.0f} m, "
+                    f"fan {fan:.0f} m -> {', '.join(names)}")
+        for index, name in enumerate(names):
+            offset = np.zeros_like(cloud.pos)
+            offset[:, 2] = index * gap
+            # A fan slides each slab sideways as it rises, so their surfaces are
+            # all visible at once instead of the top one hiding the rest.
+            offset[:, 0] = index * fan
+            slabs.append(bplt.Scatter(
+                cloud.pos + offset,
+                color=colorizations[name],
+                marker_type=c_pc["marker_type"],
+                name=f"slab_{index:02d}_{name}",
+                radius=point_size))
+        scatter = slabs[0]
+    else:
+        scatter = bplt.Scatter(
+            cloud.pos,
+            color=colorizations[default_colorname],
+            marker_type=c_pc["marker_type"],
+            name=f"point_cloud_{default_colorname}",
+            radius=point_size)
     bsdf = scatter.color_material.node_tree.nodes["Principled BSDF"]
     bsdf.inputs[7].default_value = c_pc["specularity"]
     bsdf.inputs[9].default_value = c_pc["roughness"]
@@ -641,11 +731,36 @@ def main(args):
     # the mesh's only material.
     cloud_material = scatter.color_material
     build_grading_chain(cloud_material)
+
+    # Live ramp path for continuous layers. Seeded from whichever continuous
+    # palette the default layer uses, or the first one available.
+    _all_palettes = load_palettes(c_data["palettes"], c_data["palette_overrides"])
+    continuous_layers = {
+        name: pal for name, pal in _all_palettes.items()
+        if is_continuous(pal) and name in cloud.colors}
+    _seed = continuous_layers.get(default_colorname) or (
+        next(iter(continuous_layers.values())) if continuous_layers else None)
+    if _seed is not None:
+        build_ramp_chain(
+            cloud_material,
+            stops=[[i / max(len(_seed["color_stops_rgb"]) - 1, 1)] +
+                   [v / 255.0 for v in stop]
+                   for i, stop in enumerate(_seed["color_stops_rgb"])],
+            vmin=_seed.get("vmin", 0.0) or 0.0,
+            vmax=_seed.get("vmax", 30.0) or 30.0,
+            gamma=_seed.get("gamma", 1.0))
+        # The ramp exists for live editing in the GUI only. Rendering always
+        # bakes colours per layer, so the chain must read the colour attribute;
+        # wiring it to the ramp here made every point one flat colour, because
+        # the ramp's value attribute is only populated at export.
+        select_source(cloud_material, False)
     apply_grade(cloud_material, layer_grades[default_colorname])
 
     def show_layer(colors, grade_entry):
         """Assign a colour array and its grading, keeping our material."""
         scatter.color = colors
+        # guard: never let the ramp drive a CLI render
+        select_source(cloud_material, False)
         mesh = scatter.base_object.data
         if list(mesh.materials) != [cloud_material]:
             mesh.materials.clear()
@@ -656,6 +771,13 @@ def main(args):
 
     scatter.base_object.rotation_euler = np.asarray(
         c_pc["rotation_euler"], dtype=np.float32)
+
+    # Hiding the cloud lets the graphs be rendered on their own, so the two can
+    # be composited in image space — far cheaper and cleaner than making a
+    # deeply-overlapping cloud translucent.
+    if not c_pc["visible"]:
+        scatter.base_object.hide_render = True
+        logger.info("point_cloud.visible=false — rendering overlays only")
 
     # Draw network graphs, aligned to the cloud and floating on one plane
     c_graphs = cfg["graphs"]
@@ -672,6 +794,16 @@ def main(args):
             logger.info(f"Graph alignment: coord_translation from "
                         f"{osp.basename(meta_path)} = {translation}")
 
+        ground = None
+        if c_graphs["drape"]:
+            ground = ground_module.build(
+                cloud.pos, cell=c_graphs["drape_cell"],
+                percentile=c_graphs["drape_percentile"])
+            logger.info(
+                f"Ground raster {ground.grid.shape} at {c_graphs['drape_cell']} m, "
+                f"{100*ground.coverage:.1f}% of cells filled directly, "
+                f"range {np.nanmin(ground.grid):.1f}..{np.nanmax(ground.grid):.1f} m")
+
         for item in c_graphs["items"]:
             item = {"path": item} if isinstance(item, str) else dict(item)
             graph = read_gpkg_graph(item["path"])
@@ -680,19 +812,66 @@ def main(args):
                 coord_translation=translation,
                 offset=cloud.offset,
                 height=0.0)   # height is an object transform, applied below
+
+            if ground is not None:
+                # Drape the graph's OWN vertices only. No resampling: the node
+                # and edge counts are the prediction target and must not change.
+                # Consequence: a straight edge between two distant nodes keeps
+                # its straight chord, so on steep ground it can pass below the
+                # surface between its endpoints.
+                draped = []
+                for polyline in aligned["edges"]:
+                    line = np.array(polyline, dtype=np.float64)
+                    line[:, 2] = ground.sample(line[:, :2])
+                    draped.append(line)
+                aligned = dict(aligned, edges=draped)
+                if len(aligned["nodes"]):
+                    nodes = np.array(aligned["nodes"], dtype=np.float64)
+                    nodes[:, 2] = ground.sample(nodes[:, :2])
+                    aligned["nodes"] = nodes
+                spread = (np.concatenate([e[:, 2] for e in draped])
+                          if draped else np.array([0.0]))
+                logger.info(
+                    f"  draped onto ground: z {spread.min():.1f}..{spread.max():.1f} m "
+                    f"({sum(len(e) for e in draped)} vertices, unchanged)")
+            graph_name = item.get("name", graph["name"])
+            edge_color = item.get("color", c_graphs["color"])
             material = build_material(
-                name=item.get("name", graph["name"]),
-                color=item.get("color", c_graphs["color"]),
+                name=graph_name,
+                color=edge_color,
                 alpha=item.get("alpha", c_graphs["alpha"]),
                 emission=item.get("emission", c_graphs["emission"]),
-                roughness=item.get("roughness", c_graphs["roughness"]))
+                roughness=item.get("roughness", c_graphs["roughness"]),
+                cast_shadow=item.get("cast_shadow", c_graphs["cast_shadow"]))
+            # Nodes always get their OWN material, even when the colour matches:
+            # a shared datablock cannot be pulled apart in the GUI afterwards,
+            # so this is what makes the node colour adjustable there. Defaults
+            # to the edge colour, so the rendered result is unchanged unless
+            # `node_color` is set.
+            node_color = item.get("node_color", c_graphs["node_color"])
+            node_radius = item.get("node_radius", c_graphs["node_radius"])
+            # No spheres means no second material to leave lying around.
+            node_material = None if node_radius <= 0 else build_material(
+                name=f"{graph_name}_nodes",
+                color=edge_color if node_color is None else node_color,
+                alpha=item.get("node_alpha", item.get("alpha", c_graphs["alpha"])),
+                emission=item.get("node_emission",
+                                  item.get("emission", c_graphs["emission"])),
+                roughness=item.get("roughness", c_graphs["roughness"]),
+                cast_shadow=item.get("cast_shadow", c_graphs["cast_shadow"]))
             draw_graph(
                 aligned,
                 material,
+                node_material=node_material,
                 radius=item.get("radius", c_graphs["radius"]),
-                node_radius=item.get("node_radius", c_graphs["node_radius"]),
-                name=item.get("name", graph["name"]),
-                height=item.get("height", c_graphs["height"]))
+                node_radius=node_radius,
+                name=graph_name,
+                height=item.get("height", c_graphs["height"]),
+                cast_shadow=item.get("cast_shadow", c_graphs["cast_shadow"]))
+            logger.info(
+                "  node colour: " + ("no nodes" if node_material is None else
+                                     "same as edges" if node_color is None
+                                     else str(node_color)))
             logger.info(
                 f"Drew graph {graph['name']} "
                 f"({len(aligned['edges'])} edges, {len(aligned['nodes'])} nodes) "
@@ -862,6 +1041,72 @@ def main(args):
             codec=c_video["codec"])
         logger.info("Compressing complete")
 
+    if args.frames:
+        with open(args.frames) as handle:
+            payload = json.load(handle)
+        poses = payload["poses"]
+        out_dir = args.frames_out or osp.join(root, f"{figure_name}_frames")
+        os.makedirs(out_dir, exist_ok=True)
+        logger.info(f"Rendering {len(poses)} poses to {out_dir} "
+                    f"(every {args.frames_every})")
+
+        # The clip planes come from the config, which was written for whatever
+        # shot that config was tuned on. A path that pulls further back silently
+        # loses everything beyond `far` -- it cut 25-53% of the Eiffel tile into
+        # a wedge before this. Derive it from the actual poses instead.
+        eyes = np.array([p["position"] for p in poses], dtype=np.float64)
+        reach = float(np.max(np.linalg.norm(
+            cloud.pos[None, ::97, :] - eyes[:, None, :], axis=2)))
+        safe_far = max(float(c_cam["far"]), reach * 1.25)
+        if safe_far > float(c_cam["far"]):
+            logger.info(f"Far plane {c_cam['far']} -> {safe_far:.0f} "
+                        f"(farthest point on the path is {reach:.0f} m away)")
+        bpy.context.scene.camera.data.clip_end = safe_far
+
+        show_layer(colorizations[default_colorname],
+                   layer_grades[default_colorname])
+        written = skipped = 0
+        for index, pose in enumerate(poses):
+            if index % args.frames_every:
+                continue
+            target = osp.join(out_dir, f"frame_{index:05d}.png")
+            # Resumable by design: a 40 s shot is ~1200 frames and an
+            # interrupted run should cost minutes, not the whole shot.
+            if osp.exists(target):
+                skipped += 1
+                continue
+            camera.set_position(quaternion=np.asarray(pose["quaternion"]),
+                                translation=np.asarray(pose["position"]))
+            # Slabs are animated by moving the objects, not by rebuilding them:
+            # the geometry is built once and each frame only writes a location
+            # and a visibility flag.
+            if args.exploded and "slabs" in pose:
+                for slab, state in zip(slabs, pose["slabs"]):
+                    slab.base_object.location[0] = float(state.get("x", 0.0))
+                    slab.base_object.location[2] = float(state["z"])
+                    # A slab fading in reads far better than one popping in.
+                    # Cycles honours the BSDF alpha directly, so this needs no
+                    # blend-mode juggling.
+                    if "alpha" in state:
+                        bsdf = slab.color_material.node_tree.nodes.get(
+                            "Principled BSDF")
+                        if bsdf is not None:
+                            bsdf.inputs["Alpha"].default_value = float(
+                                state["alpha"])
+                    hidden = not bool(state.get("visible", True))
+                    slab.base_object.hide_render = hidden
+                    slab.base_object.hide_viewport = hidden
+            img = scene.render(use_gpu=not c_render["cpu"],
+                               samples=c_render["n_samples"])
+            # Keep the alpha: compositing onto white is an assembly-time
+            # decision, and a transparent frame can still be laid over a title
+            # card or a different background later.
+            Image.fromarray(img.astype(np.uint8), "RGBA").save(target)
+            written += 1
+            if written % 20 == 0:
+                logger.info(f"  {written} rendered, {index + 1}/{len(poses)}")
+        logger.info(f"Frames complete: {written} written, {skipped} already present")
+
     # Optionally save blend file with the scene at frame 0
     if args.export:
         # Store every colorization as an extra colour attribute on the SAME
@@ -883,6 +1128,106 @@ def main(args):
                 attribute.data.foreach_set("color", np.ascontiguousarray(rgba).ravel())
             store_layers(scatter.base_object, layer_grades)
             scatter.base_object["figure_active_layer"] = default_colorname
+
+            # Categorical layers additionally carry their class index per point
+            # and their palette, so class colours stay editable in the GUI. The
+            # index is recovered by matching each point's colour back to the
+            # palette LUT — exact, because every class has a distinct colour —
+            # which avoids re-parsing the source cloud.
+            all_palettes = load_palettes(c_data["palettes"], c_data["palette_overrides"])
+            tables = {}
+            for name, palette in all_palettes.items():
+                if name not in cloud.colors or is_continuous(palette):
+                    continue
+                if not palette.get("names"):
+                    continue
+                raw_lut, display_lut, class_names, void_indices = (
+                    blender_palette.build_lut(palette, void_color=c_void["color"]))
+                # Match against the RAW palette: the cached colours predate void
+                # muting, so matching against the muted table would fail for
+                # every void point.
+                labels, unmatched = blender_palette.class_indices(
+                    cloud.colors[name], raw_lut)
+                if unmatched:
+                    logger.info(
+                        f"  {name}: {unmatched} points matched no class colour "
+                        f"and were assigned '{blender_palette.UNKNOWN_NAME}'")
+
+                attribute = mesh.attributes.new(
+                    name=f"class_{name}", type="INT", domain="POINT")
+                attribute.data.foreach_set("value", labels)
+
+                present = np.bincount(labels, minlength=len(display_lut)).tolist()
+                tables[name] = {
+                    "names": class_names,
+                    "colors": display_lut.tolist(),
+                    "counts": present,
+                    "void": void_indices,
+                }
+                logger.info(
+                    f"  {name}: palette editable "
+                    f"({sum(1 for c in present if c)} of {len(class_names)} "
+                    f"classes present)")
+            if tables:
+                blender_palette.store(scatter.base_object, tables)
+
+            # Continuous layers carry their RAW values, so the ramp can be
+            # re-mapped live in the GUI without touching the point data.
+            continuous_meta = {}
+            for name, palette in _all_palettes.items():
+                if name not in cloud.colors or not is_continuous(palette):
+                    continue
+                source_field = palette.get("field", name)
+                if source_field not in cloud.fields:
+                    continue
+                raw_values = np.asarray(cloud.fields[source_field], dtype=np.float32)
+                finite = np.isfinite(raw_values)
+                values = np.where(finite, raw_values, 0.0)
+                attribute = mesh.attributes.new(
+                    name=f"value_{name}", type="FLOAT", domain="POINT")
+                attribute.data.foreach_set("value", values)
+                # The range the GUI ramp opens on has to be the one the baked
+                # colours came from, so resolve it exactly as `continuous_colors`
+                # does. A flat 0..30 fallback is an elevation default: it would
+                # squash `strength` (0..1, 98th percentile ~0.07) into the
+                # bottom stop and render the panel useless for it.
+                if palette.get("vmin") is not None and palette.get("vmax") is not None:
+                    vmin, vmax = float(palette["vmin"]), float(palette["vmax"])
+                else:
+                    vmin, vmax = (float(v) for v in np.percentile(
+                        raw_values[finite],
+                        [palette.get("percentile_low", 2.0),
+                         palette.get("percentile_high", 98.0)]))
+                continuous_meta[name] = {
+                    "vmin": vmin,
+                    "vmax": vmax,
+                    "gamma": palette.get("gamma", 1.0),
+                    "unit": "m" if name == "elevation" else "",
+                }
+                logger.info(f"  {name}: raw values stored for live ramp editing "
+                            f"({values.min():.1f}..{values.max():.1f})")
+            if continuous_meta:
+                # Point the ramp's attribute at a real layer so the GUI has
+                # something to show the moment it switches, but leave the
+                # grading chain reading the baked colours.
+                first = sorted(continuous_meta)[0]
+                value_node = cloud_material.node_tree.nodes.get("value_attribute")
+                if value_node is not None:
+                    value_node.attribute_name = f"value_{first}"
+                select_source(cloud_material, False)
+                scatter.base_object["figure_continuous"] = json.dumps(continuous_meta)
+                colormap_file = osp.join(
+                    osp.dirname(osp.dirname(osp.abspath(__file__))),
+                    "configs", "palettes", "colormaps.json")
+                if osp.exists(colormap_file):
+                    with open(colormap_file) as f:
+                        scatter.base_object["figure_colormaps"] = f.read()
+                    # v2 stores {"version", "maps"}; len() of that is 2, not
+                    # the number of colormaps.
+                    _payload = json.load(open(colormap_file))
+                    logger.info(
+                        f"  embedded {len(_payload.get('maps', _payload))} "
+                        f"colormap presets")
             apply_grade(scatter.color_material, layer_grades[default_colorname])
             logger.info(
                 f"Stored {len(layer_grades)} layers "
@@ -911,6 +1256,24 @@ def main(args):
             logger.info(
                 "Embedded figure_panel.py — in the GUI: Scripting tab, "
                 "Run Script, then press N in the viewport for the 'Figure' tab.")
+
+        # Blender's viewport has its own clip range, independent of the camera.
+        # It defaults to 1000 m, which silently culls the far side of a tile that
+        # is 1-1.5 km across — the render is unaffected, so it only shows up in
+        # the GUI. Match it to the camera so the whole tile is visible.
+        far = float(c_cam["far"])
+        near = float(c_cam["near"])
+        viewports = 0
+        for screen in bpy.data.screens:
+            for area in screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                for space in area.spaces:
+                    if space.type == "VIEW_3D":
+                        space.clip_start = near
+                        space.clip_end = far
+                        viewports += 1
+        logger.info(f"Viewport clip set to [{near}, {far}] on {viewports} 3D views")
 
         scene.export(path_blender)
         logger.info(f"Exported {path_blender}")
@@ -941,6 +1304,29 @@ if __name__ == '__main__':
         default=None,
         type=str,
         help="Input point cloud .pt file (overrides data.path in the config)")
+    parser.add_argument(
+        "--exploded",
+        default=None,
+        type=str,
+        help="Comma-separated layer names to stack as slabs in Z, e.g. "
+             "'rgb,semantic,forest'. Duplicates geometry per slab, so subsample")
+    parser.add_argument(
+        "--frames",
+        default=None,
+        type=str,
+        help="Render a camera path (JSON from scripts/camera_path.py) to a PNG "
+             "sequence instead of a video. Resumable: existing frames are kept")
+    parser.add_argument(
+        "--frames_out",
+        default=None,
+        type=str,
+        help="Directory for --frames output (default: alongside the .blend)")
+    parser.add_argument(
+        "--frames_every",
+        default=1,
+        type=int,
+        help="Render only every Nth pose. The cheap way to preview a shot: "
+             "quality per frame barely moves the clock, frame count does")
     parser.add_argument(
         "--path_bbox",
         default=None,

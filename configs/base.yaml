@@ -22,10 +22,20 @@ data:
 render:
   engine: CYCLES        # CYCLES | BLENDER_EEVEE | BLENDER_WORKBENCH
   n_samples: 64
-  resolution: [2100, 1400]
+  resolution: [2100, 1190]   # 3:1.7. fov_x_deg is the HORIZONTAL
+                             # field of view, so the vertical one
+                             # follows from this aspect: changing it
+                             # crops top and bottom and leaves the
+                             # horizontal framing untouched.
   cpu: false
   transparent_film: true
   view_transform: Standard
+  # Contact shadows. Cycles' Fast GI darkens the gaps between tree crowns and
+  # under hedgerows, which is what makes a point cloud read as solid rather than
+  # as confetti. `ao_distance` is the radius it considers, in scene units.
+  fast_gi: false
+  ao_distance: 10.0
+  ao_bounces: 1
 
 camera:
   translation: [0.0, 0.0, 10.0]
@@ -36,12 +46,15 @@ camera:
 
 sun:
   energy: 1
-  color: [1.0, 1.0, 1.0]
+  color: [1.0, 1.0, 1.0]   # white: a tinted source shifts every palette colour
   location: [0, 0, 5]
   rotation_euler: [1, 0, 2]
+  angle: 0.526            # angular diameter in DEGREES. Blender's default is
+                          # the real sun (0.526), which gives razor-sharp edges;
+                          # 2-3 softens them, which suits an aerial scene.
 
 world:
-  color: [1, 0.934681, 0.78918]
+  color: [1.0, 1.0, 1.0]   # white ambient, for the same reason
   strength: 1.3
 
 point_cloud:
@@ -49,8 +62,13 @@ point_cloud:
   roughness: 0.2
   rotation_euler: [0.0, 0.0, 0.0]
   marker_type: spheres
+  visible: true         # false renders the graphs alone, for 2-pass compositing
   alpha: 1.0            # global opacity, live-scrubbable in the GUI as the
                         # `cloud_alpha` node
+  explode_gap: 0.16    # slab spacing in the exploded view, as a fraction of
+                       # the tile's X extent
+  explode_fan: 0.0     # sideways slide per slab; 0 = a flat stack, ~0.09 fans
+                       # them like a spread deck so every surface is visible
   layer_alpha: {}       # per-layer opacity, e.g. {rgb_muted: 0.05}. Baked into
                         # that layer's alpha channel, so switching layer in the
                         # GUI switches opacity with it.
@@ -59,7 +77,7 @@ point_cloud:
 # value). They are kept so the geometry stays complete, but they carry no label
 # and no metrics, so they are rendered as secondary rather than as a class.
 void:
-  color: [0.72, 0.72, 0.72]   # neutral grey; null keeps the palette's own colour
+  color: [0.7686275, 0.7686275, 0.7686275]  # #C4C4C4; null keeps the palette's own
   alpha: 1.0                  # multiplies point_cloud.alpha; <1 fades them further
 
 # Colour grading, applied to photographic layers only. Grading a categorical
@@ -87,14 +105,27 @@ color:
 graphs:
   items: []             # [{path: ..., color: [r,g,b], height: ..., name: ...}, ...]
   coord_translation: auto   # `auto` reads it from the <roi>_meta.json sidecar
-  height: 30.0          # metres above the cloud's ground plane
+  # Follow the terrain instead of floating on one plane. `height` then becomes
+  # a clearance ABOVE THE GROUND rather than an absolute z, and is still applied
+  # as an object transform so it stays draggable in the GUI.
+  drape: true
+  drape_cell: 10.0      # ground raster resolution, scene units
+  drape_percentile: 5.0 # quantile of z taken as ground within a cell
+  height: 30.0          # clearance above ground (or absolute z when drape=false)
   radius: 1.0           # tube radius
   node_radius: 0.0      # sphere radius at graph nodes (0 = no nodes)
   color: [0.35, 0.55, 1.0]
+  # Node spheres take the edge colour unless this is set. Nodes always get their
+  # own material either way, so the two can be pulled apart in the GUI; setting
+  # a slightly different colour here helps dense networks read.
+  node_color: null      # null = same as `color`; [r, g, b] to differ
   alpha: 1.0            # graphs read best opaque; fade the cloud instead
                         # via point_cloud.alpha
   emission: 0.2         # slight glow keeps it readable over dark geometry
   roughness: 0.35
+  cast_shadow: false    # graphs high above the cloud cast a shadow far from
+                        # themselves, reading as a spurious second network.
+                        # Enable only for low-floating graphs, as a height cue.
 
 export:
   # Write every colorization into the exported .blend as a separate colour

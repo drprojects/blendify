@@ -1,0 +1,27 @@
+{
+ "_comment": [
+  "Prediction layers for MALIBU3D figure 4. Each inherits its ground-truth",
+  "counterpart's palette via `like`, so a GT colour edit reaches both and the",
+  "two can never drift out of sync -- which matters because a prediction figure",
+  "is only readable if it uses exactly the same colours as the GT beside it.",
+  "",
+  "The four habitat tasks are the subtle case. Ground truth ships as one",
+  "44-class `natural_habitat` field that we REMAP into each task; predictions",
+  "ship already in each task's own index space (verified: 92.5% identity",
+  "agreement, and no relabelling of the predicted classes fits better). So the",
+  "inherited `remap` is dropped with an explicit null -- applying it again",
+  "would scramble the labels.",
+  "",
+  "This file is loaded INSTEAD of malibu3d_extra.json, so it re-includes it by",
+  "extending the same layers. Regenerate with scripts/make_prediction_palettes.py"
+ ],
+
+ "pred_semantic":         {"like": "semantic",         "field": "pred_semantic"},
+ "pred_forest":           {"like": "forest",           "field": "pred_forest"},
+ "pred_elevation":        {"like": "elevation",        "field": "pred_elevation"},
+
+ "pred_habitat_type":     {"like": "habitat_type",     "field": "pred_nathab_habitat_type",     "remap": null},
+ "pred_moisture_regime":  {"like": "moisture_regime",  "field": "pred_nathab_moisture_regime",  "remap": null},
+ "pred_soil_chemistry":   {"like": "soil_chemistry",   "field": "pred_nathab_soil_chemistry",   "remap": null},
+ "pred_bioclimatic_zone": {"like": "bioclimatic_zone", "field": "pred_nathab_bioclimatic_zone", "remap": null}
+}

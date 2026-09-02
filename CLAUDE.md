@@ -58,7 +58,7 @@ run-time concerns; nothing about the figure's appearance lives in code.
 ~/miniconda3/envs/blendify/bin/python examples/00_custom.py \
     --config configs/figures/malibu3d_D075_UU-S1-3.yaml --image \
     --set data.subsample=150000 "data.colors=['rgb','semantic']" \
-          render.n_samples=8 "render.resolution=[640,428]" render.cpu=True
+          render.n_samples=8 "render.resolution=[640,363]" render.cpu=True
 
 # Video along the config's camera trajectory
 ~/miniconda3/envs/blendify/bin/python examples/00_custom.py \
@@ -115,6 +115,64 @@ To see what a new file yields before writing a config:
 categorical (`names` + `colors` + `unknown_color`) or continuous (`type:
 continuous`, `color_stops_rgb`, percentile clipping). The format comes from
 MALIBU3D's `palettes.json` but nothing in the module is dataset-specific.
+
+### Model predictions (figure 4)
+
+The `predictions/` sub-drop ships the same clouds as the main drop plus one
+predicted field per benchmark task. Ground truth and prediction are two
+colorizations of one cloud, so a GT/pred pair is a layer switch, not a second
+render.
+
+| task | ground truth field | predicted field |
+|---|---|---|
+| semantic | `semantic` | `pred_semantic` |
+| forest | `forest` | `pred_forest` |
+| elevation | `elevation` | `pred_elevation` |
+| habitat type | `natural_habitat` **remapped** | `pred_nathab_habitat_type` |
+| moisture regime | `natural_habitat` **remapped** | `pred_nathab_moisture_regime` |
+| soil chemistry | `natural_habitat` **remapped** | `pred_nathab_soil_chemistry` |
+| bioclimatic zone | `natural_habitat` **remapped** | `pred_nathab_bioclimatic_zone` |
+
+**The four habitat tasks are asymmetric and it matters.** Ground truth arrives as
+one 44-class `natural_habitat` field that each task `remap`s into its own
+classes; predictions arrive *already* in each task's index space. So the
+prediction palettes inherit the GT palette but drop the `remap` — applying it a
+second time would scramble the labels. Verified against ground truth: 92.5%
+identity agreement, and no relabelling of the predicted classes fits better.
+
+Prediction palettes are declared in `configs/palettes/malibu3d_predictions.json`
+using `"like"`, which deep-copies another layer's palette:
+
+```json
+"pred_semantic":     {"like": "semantic", "field": "pred_semantic"},
+"pred_habitat_type": {"like": "habitat_type",
+                      "field": "pred_nathab_habitat_type", "remap": null}
+```
+
+Inheriting rather than copying is deliberate: a prediction figure is only
+readable if it uses *exactly* the GT colours, so an edit to the semantic palette
+must reach both. An explicit `null` deletes an inherited key.
+`data.palette_overrides` accepts a list, so the shared restyle and the
+prediction layers compose without either copying the other.
+
+Road networks come as both `<roi>_ROADS_graph.gpkg` and
+`<roi>_ROADS_pred_graph.gpkg`; `prepare_rois.py` names them `roads_gt` and
+`roads_pred` and gives them contrasting hues (blue / orange) rather than two
+shades of one colour, which would read as one network drawn twice.
+
+Prediction configs are generated with a suffix so they do not collide with the
+originals:
+
+```bash
+python scripts/prepare_rois.py \
+    --drop data/malibu3d/send_29_07_v2/blender_export/predictions \
+    --suffix _pred \
+    --palette-overrides "configs/palettes/malibu3d_extra.json,configs/palettes/malibu3d_predictions.json" \
+    --camera-from malibu3d_D075_UU-S1-4
+```
+
+In the GUI, the Layer panel pairs each task on one row — ground truth left,
+prediction right — with a *Flip ground truth / prediction* button.
 
 ### Network graphs
 

@@ -8,25 +8,55 @@ data:
   # rebuilt automatically if the PLY or palettes.json changes.
   path: data/malibu3d/send_29_07_v2/blender_export/D075_UU-S1-3/D075_UU-S1-3.ply.gz
 
+# The teaser pose. Recovered from /tmp/quit.blend — it was moved in the GUI
+# after the last save, used for the eiffel_tower_* renders, and would have died
+# with the session. Confirmed against eiffel_tower_rgb.png by re-render:
+# luminance correlation 0.911 and silhouette IoU 0.996, versus 0.135 / 0.887 for
+# the pose that had actually been saved into the .blend.
 camera:
-  translation: [-148.8197937, 332.4529724, 283.6636353]
-  quaternion: [-0.197179, -0.0911557, 0.4096073, 0.8860208]
-  fov_x_deg: 73.0
+  translation: [105.8815689, -262.0376587, 507.0003662]
+  quaternion: [0.9780563, 0.1762633, 0.0117786, 0.1104475]
+  fov_x_deg: 38.5801
   near: 0.1
   far: 1000.0
 
-sun:
-  energy: 2.5
-  color: [1.0, 0.9399852, 0.7728401]
-  location: [0.0, 0.0, 5.0]
-  rotation_euler: [4.0281625, 0.8899912, 1.5299786]
-
-world:
-  color: [1.0, 0.934681, 0.78918]
-  strength: 0.8
+# NOTE: this tile used to pin a warm sun and world strength 0.8, captured in an
+# early GUI session. Those pins are removed so it inherits the dataset lighting
+# (white sun at 23 deg with 2.5 deg softness, world 0.40, Fast GI) like every
+# other tile. Re-tune in the GUI and pull back if you want a bespoke look here.
 
 graphs:
   items:
     - path: data/malibu3d/send_29_07_v2/blender_export/D075_UU-S1-3/D075_UU-S1-3_ROADS_graph.gpkg
       name: roads_gt
       color: [0.3, 0.55, 1.0]
+
+# Radiometric grade as tuned in the GUI on 2026-08-11: saturation pushed back
+# to full and a touch of contrast. Read off the live `grade_saturation` /
+# `grade_brightcontrast` nodes — the Figure panel had not written them into the
+# object's `figure_layers` table, so scene_to_config could not see them.
+color:
+  saturation: 1.0
+  contrast: 0.1
+  brightness: 0.0
+  exposure: 0.0
+  gamma: 1.0
+
+point_cloud:
+  alpha: 1.0
+
+sun:
+  energy: 3.4000001
+  angle: 2.5
+  color: [1.0, 1.0, 1.0]
+  location: [0.0, 0.0, 5.0]
+  rotation_euler: [1.1693707, 0.0, 0.7853982]
+
+world:
+  color: [1.0, 1.0, 1.0]
+  strength: 0.4
+
+render:
+  fast_gi: True
+  ao_bounces: 1
+  ao_distance: 8.0
